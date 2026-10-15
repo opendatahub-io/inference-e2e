@@ -84,14 +84,18 @@ setup: ## Clone manifest repo (MANIFEST_REF=branch, or interactive if not set)
 _do-setup:
 	@mkdir -p $(MANIFEST_DIR)
 	@rm -rf $(MANIFEST_DIR)/*.yaml
-	@git clone --depth 1 --branch $(MANIFEST_REF) $(MANIFEST_REPO) /tmp/llm-d-manifests
-	@COMMIT=$$(git -C /tmp/llm-d-manifests rev-parse HEAD); \
-	cp /tmp/llm-d-manifests/*.yaml $(MANIFEST_DIR)/; \
+	@set -e; \
+	tmpdir=$$(mktemp -d); \
+	trap 'rm -rf "$$tmpdir"' EXIT; \
+	clone_dir="$$tmpdir/repo"; \
+	git clone --depth 1 --branch "$(MANIFEST_REF)" "$(MANIFEST_REPO)" "$$clone_dir"; \
+	COMMIT=$$(git -C "$$clone_dir" rev-parse HEAD); \
+	cp "$$clone_dir"/*.yaml "$(MANIFEST_DIR)/"; \
 	printf 'branch: %s\nrepo: %s\ncommit: %s\ndate: %s\n' \
 		"$(MANIFEST_REF)" "$(MANIFEST_REPO)" "$$COMMIT" "$$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-		> $(MANIFEST_DIR)/.manifest-ref; \
-	rm -rf /tmp/llm-d-manifests; \
-	echo "Manifests ready (branch: $(MANIFEST_REF), commit: $${COMMIT:0:8})"; \
+		> "$(MANIFEST_DIR)/.manifest-ref"; \
+	COMMIT_SHORT=$$(printf '%.8s' "$$COMMIT"); \
+	echo "Manifests ready (branch: $(MANIFEST_REF), commit: $$COMMIT_SHORT)"; \
 	echo ""; \
 	echo "Test cases:"; \
 	for tc in $(TESTCASE_DIR)/*.yaml; do \

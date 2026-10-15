@@ -24,6 +24,7 @@ from __future__ import annotations
 import argparse
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 DEFAULT_MOCK_IMAGE = "ghcr.io/llm-d/llm-d-inference-sim:latest"
@@ -282,26 +283,27 @@ def _setup_manifests(ref: str, repo: str = MANIFEST_REPO):
     manifest_dir.mkdir(parents=True, exist_ok=True)
 
     print(f"Cloning manifests from {ref}...")
-    result = subprocess.run(
-        ["git", "clone", "--depth", "1", "--branch", ref, repo, "/tmp/llm-d-manifests"],
-        capture_output=True,
-        text=True,
-    )
-    if result.returncode != 0:
-        print(f"Failed to clone manifests: {result.stderr.strip()}")
-        sys.exit(1)
+    with tempfile.TemporaryDirectory(prefix="llm-d-manifests-") as temp_dir:
+        clone_dir = Path(temp_dir) / "repo"
+        result = subprocess.run(
+            ["git", "clone", "--depth", "1", "--branch", ref, repo, str(clone_dir)],
+            capture_output=True,
+            text=True,
+        )
+        if result.returncode != 0:
+            print(f"Failed to clone manifests: {result.stderr.strip()}")
+            sys.exit(1)
 
-    commit = subprocess.run(
-        ["git", "-C", "/tmp/llm-d-manifests", "rev-parse", "HEAD"],
-        capture_output=True,
-        text=True,
-    ).stdout.strip()
+        commit = subprocess.run(
+            ["git", "-C", str(clone_dir), "rev-parse", "HEAD"],
+            capture_output=True,
+            text=True,
+        ).stdout.strip()
 
-    for stale in manifest_dir.glob("*.yaml"):
-        stale.unlink()
-    for f in Path("/tmp/llm-d-manifests").glob("*.yaml"):
-        (manifest_dir / f.name).write_text(f.read_text())
-    subprocess.run(["rm", "-rf", "/tmp/llm-d-manifests"])
+        for stale in manifest_dir.glob("*.yaml"):
+            stale.unlink()
+        for f in clone_dir.glob("*.yaml"):
+            (manifest_dir / f.name).write_text(f.read_text())
 
     ref_file = manifest_dir / ".manifest-ref"
     ref_file.write_text(

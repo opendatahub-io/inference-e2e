@@ -15,9 +15,37 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 from conformance.config import load_testcase
 
 
+def test_setup_manifests_uses_unique_temporary_clone_and_cleans_on_failure(tmp_path, monkeypatch):
+    from unittest.mock import MagicMock, patch
+
+    import conformance.cli as cli_mod
+
+    monkeypatch.chdir(tmp_path)
+    clone_dirs = []
+
+    def fake_run(cmd, **kwargs):
+        result = MagicMock()
+        result.returncode = 1
+        result.stdout = ""
+        result.stderr = "clone failed"
+        if cmd[:2] == ["git", "clone"]:
+            clone_dirs.append(Path(cmd[-1]))
+        return result
+
+    with patch.object(cli_mod, "subprocess") as mock_sub:
+        mock_sub.run.side_effect = fake_run
+        for _ in range(2):
+            with pytest.raises(SystemExit):
+                cli_mod._setup_manifests("main")
+
+    assert len(clone_dirs) == 2
+    assert all(clone_dir != Path("/tmp/llm-d-manifests") for clone_dir in clone_dirs)
+    assert clone_dirs[0] != clone_dirs[1]
+    assert all(not clone_dir.parent.exists() for clone_dir in clone_dirs)
+
+
 def test_setup_manifests_removes_stale_files(tmp_path, monkeypatch):
     """Switching manifest branches must remove stale files from the previous branch."""
-    import shutil
     from unittest.mock import MagicMock, patch
 
     import conformance.cli as cli_mod
@@ -29,18 +57,19 @@ def test_setup_manifests_removes_stale_files(tmp_path, monkeypatch):
     for stale in ["flow-control-tokens.yaml", "flow-control.yaml", "pd-performance.yaml"]:
         (manifest_dir / stale).write_text("stale: true")
 
-    clone_dir = Path("/tmp/llm-d-manifests")
-    clone_dir.mkdir(exist_ok=True)
-    for new in ["single-gpu.yaml", "cache-aware.yaml"]:
-        (clone_dir / new).write_text("branch: 3.4-stable")
+    clone_dirs = []
 
     def fake_run(cmd, **kwargs):
         result = MagicMock()
         result.returncode = 0
         result.stdout = "abc1234deadbeef\n"
         result.stderr = ""
-        if cmd[0] == "rm":
-            shutil.rmtree(str(clone_dir), ignore_errors=True)
+        if cmd[:2] == ["git", "clone"]:
+            clone_dir = Path(cmd[-1])
+            clone_dir.mkdir(parents=True)
+            clone_dirs.append(clone_dir)
+            for new in ["single-gpu.yaml", "cache-aware.yaml"]:
+                (clone_dir / new).write_text("branch: 3.4-stable")
         return result
 
     with patch.object(cli_mod, "subprocess") as mock_sub:
@@ -53,11 +82,12 @@ def test_setup_manifests_removes_stale_files(tmp_path, monkeypatch):
     assert "pd-performance.yaml" not in remaining
     assert "single-gpu.yaml" in remaining
     assert "cache-aware.yaml" in remaining
+    assert len(clone_dirs) == 1
+    assert not clone_dirs[0].parent.exists()
 
 
 def test_setup_manifests_uses_custom_repo(tmp_path, monkeypatch):
     """--manifest-repo <URL> must clone from the given repo, not the default."""
-    import shutil
     from unittest.mock import MagicMock, patch
 
     import conformance.cli as cli_mod
@@ -66,11 +96,8 @@ def test_setup_manifests_uses_custom_repo(tmp_path, monkeypatch):
 
     custom_repo = "https://github.com/my-org/my-repo.git"
 
-    clone_dir = Path("/tmp/llm-d-manifests")
-    clone_dir.mkdir(exist_ok=True)
-    (clone_dir / "single-gpu.yaml").write_text("branch: my-branch")
-
     clone_cmds = []
+    clone_dirs = []
 
     def fake_run(cmd, **kwargs):
         result = MagicMock()
@@ -79,8 +106,10 @@ def test_setup_manifests_uses_custom_repo(tmp_path, monkeypatch):
         result.stderr = ""
         if cmd[:2] == ["git", "clone"]:
             clone_cmds.append(cmd)
-        if cmd[0] == "rm":
-            shutil.rmtree(str(clone_dir), ignore_errors=True)
+            clone_dir = Path(cmd[-1])
+            clone_dir.mkdir(parents=True)
+            clone_dirs.append(clone_dir)
+            (clone_dir / "single-gpu.yaml").write_text("branch: my-branch")
         return result
 
     with patch.object(cli_mod, "subprocess") as mock_sub:
@@ -93,22 +122,20 @@ def test_setup_manifests_uses_custom_repo(tmp_path, monkeypatch):
 
     ref_file = tmp_path / "deploy" / "manifests" / ".manifest-ref"
     assert f"repo: {custom_repo}" in ref_file.read_text()
+    assert len(clone_dirs) == 1
+    assert not clone_dirs[0].parent.exists()
 
 
 def test_setup_manifests_defaults_to_upstream_repo(tmp_path, monkeypatch):
     """Without --manifest-repo, _setup_manifests clones the upstream default."""
-    import shutil
     from unittest.mock import MagicMock, patch
 
     import conformance.cli as cli_mod
 
     monkeypatch.chdir(tmp_path)
 
-    clone_dir = Path("/tmp/llm-d-manifests")
-    clone_dir.mkdir(exist_ok=True)
-    (clone_dir / "single-gpu.yaml").write_text("branch: main")
-
     clone_cmds = []
+    clone_dirs = []
 
     def fake_run(cmd, **kwargs):
         result = MagicMock()
@@ -117,8 +144,10 @@ def test_setup_manifests_defaults_to_upstream_repo(tmp_path, monkeypatch):
         result.stderr = ""
         if cmd[:2] == ["git", "clone"]:
             clone_cmds.append(cmd)
-        if cmd[0] == "rm":
-            shutil.rmtree(str(clone_dir), ignore_errors=True)
+            clone_dir = Path(cmd[-1])
+            clone_dir.mkdir(parents=True)
+            clone_dirs.append(clone_dir)
+            (clone_dir / "single-gpu.yaml").write_text("branch: main")
         return result
 
     with patch.object(cli_mod, "subprocess") as mock_sub:
@@ -127,6 +156,8 @@ def test_setup_manifests_defaults_to_upstream_repo(tmp_path, monkeypatch):
 
     assert clone_cmds, "git clone was never invoked"
     assert cli_mod.MANIFEST_REPO in clone_cmds[0]
+    assert len(clone_dirs) == 1
+    assert not clone_dirs[0].parent.exists()
 
 
 def test_require_manifest_skips_when_missing(tmp_path):
