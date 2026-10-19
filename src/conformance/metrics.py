@@ -179,25 +179,26 @@ class Scraper:
         self.kubeconfig = kubeconfig
 
     def _scrape_via_exec(self, pod: str, port: int) -> str:
-        script = (
-            f"import urllib.request,ssl; "
-            f"print(urllib.request.urlopen('https://localhost:{port}/metrics',"
-            f"context=ssl._create_unverified_context()).read().decode())"
-        )
-        try:
-            return self._kubectl("exec", pod, "-n", self.namespace, "--", "python3", "-c", script)
-        except RuntimeError:
-            return self._kubectl(
-                "exec",
-                pod,
-                "-n",
-                self.namespace,
-                "--",
-                "wget",
-                "--no-check-certificate",
-                "-qO-",
-                f"https://localhost:{port}/metrics",
+        # Try HTTPS first (workload pods with TLS), then HTTP (EPP metrics port).
+        for scheme in ("https", "http"):
+            script = (
+                f"import urllib.request,ssl; "
+                f"print(urllib.request.urlopen('{scheme}://localhost:{port}/metrics'"
+                + (",context=ssl._create_unverified_context()" if scheme == "https" else "")
+                + ").read().decode())"
             )
+            try:
+                return self._kubectl("exec", pod, "-n", self.namespace, "--", "python3", "-c", script)
+            except RuntimeError:
+                try:
+                    wget_args = ["--no-check-certificate"] if scheme == "https" else []
+                    return self._kubectl(
+                        "exec", pod, "-n", self.namespace, "--",
+                        "wget", *wget_args, "-qO-", f"{scheme}://localhost:{port}/metrics",
+                    )
+                except RuntimeError:
+                    continue
+        raise RuntimeError(f"exec scrape failed for {pod}:{port} on both https and http")
 
     def _get_pod_sa_token(self, pod: str) -> str:
         """Get a bearer token for the pod's service account via kubectl create token."""

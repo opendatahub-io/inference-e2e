@@ -357,11 +357,10 @@ class Deployer:
         return sorted(names)
 
     def ensure_metrics_rbac(self, name: str):
-        """Bind the EPP service account to kserve-metrics-reader-cluster-role for metrics scraping."""
+        """Bind the EPP service account to a metrics-reader ClusterRole for metrics scraping."""
         sa_name = f"{name}-epp-sa"
         binding_name = f"{self.namespace}-{name}-metrics-reader"
         try:
-            self.kubectl("get", "clusterrolebinding", binding_name, check=False)
             existing = self.kubectl(
                 "get",
                 "clusterrolebinding",
@@ -374,17 +373,22 @@ class Deployer:
                 return
         except RuntimeError:
             pass
-        try:
-            self.kubectl(
-                "create",
-                "clusterrolebinding",
-                binding_name,
-                "--clusterrole=kserve-metrics-reader-cluster-role",
-                f"--serviceaccount={self.namespace}:{sa_name}",
-            )
-            log.info("Created metrics RBAC binding %s for %s", binding_name, sa_name)
-        except RuntimeError as e:
-            log.warning("Could not create metrics RBAC binding: %s", e)
+        # The monitoring overlay (OpenShift) deploys kserve-metrics-reader-cluster-role;
+        # the base RBAC (always present) deploys kserve-metrics-reader.
+        for role in ("kserve-metrics-reader-cluster-role", "kserve-metrics-reader"):
+            try:
+                self.kubectl(
+                    "create",
+                    "clusterrolebinding",
+                    binding_name,
+                    f"--clusterrole={role}",
+                    f"--serviceaccount={self.namespace}:{sa_name}",
+                )
+                log.info("Created metrics RBAC binding %s for %s (role: %s)", binding_name, sa_name, role)
+                return
+            except RuntimeError:
+                continue
+        log.warning("Could not create metrics RBAC binding %s: no metrics-reader ClusterRole found", binding_name)
 
     def cleanup_metrics_rbac(self, name: str):
         binding_name = f"{self.namespace}-{name}-metrics-reader"
