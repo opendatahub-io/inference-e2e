@@ -193,8 +193,15 @@ class Scraper:
                 try:
                     wget_args = ["--no-check-certificate"] if scheme == "https" else []
                     return self._kubectl(
-                        "exec", pod, "-n", self.namespace, "--",
-                        "wget", *wget_args, "-qO-", f"{scheme}://localhost:{port}/metrics",
+                        "exec",
+                        pod,
+                        "-n",
+                        self.namespace,
+                        "--",
+                        "wget",
+                        *wget_args,
+                        "-qO-",
+                        f"{scheme}://localhost:{port}/metrics",
                     )
                 except RuntimeError:
                     continue
