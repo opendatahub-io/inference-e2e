@@ -1913,6 +1913,140 @@ def test_env_overrides_applied_to_decode_and_prefill():
         Path(tmp).unlink()
 
 
+def test_ensure_metrics_rbac_preferred_role_succeeds(monkeypatch):
+    """ensure_metrics_rbac creates a binding with the preferred ClusterRole without fallback."""
+    from conformance.deployer import Deployer
+
+    d = Deployer(namespace="test-ns")
+    calls = []
+
+    def fake_kubectl(*args, **kwargs):
+        calls.append(args)
+        if args[0] == "get" and args[1] == "clusterrolebinding":
+            raise RuntimeError("not found")
+        if args[0] == "create" and args[1] == "clusterrolebinding":
+            return ""
+        return ""
+
+    monkeypatch.setattr(d, "kubectl", fake_kubectl)
+
+    d.ensure_metrics_rbac("my-svc")
+
+    create_calls = [c for c in calls if c[0] == "create"]
+    assert len(create_calls) == 1
+    assert "--clusterrole=kserve-metrics-reader-cluster-role" in create_calls[0]
+
+
+def test_ensure_metrics_rbac_falls_back_to_base_role(monkeypatch):
+    """When the preferred ClusterRole is missing, ensure_metrics_rbac falls back to the base role."""
+    from conformance.deployer import Deployer
+
+    d = Deployer(namespace="test-ns")
+    calls = []
+
+    def fake_kubectl(*args, **kwargs):
+        calls.append(args)
+        if args[0] == "get" and args[1] == "clusterrolebinding":
+            raise RuntimeError("not found")
+        if args[0] == "create" and args[1] == "clusterrolebinding":
+            for a in args:
+                if a == "--clusterrole=kserve-metrics-reader-cluster-role":
+                    raise RuntimeError("clusterrole not found")
+            return ""
+        return ""
+
+    monkeypatch.setattr(d, "kubectl", fake_kubectl)
+
+    d.ensure_metrics_rbac("my-svc")
+
+    create_calls = [c for c in calls if c[0] == "create"]
+    assert len(create_calls) == 2
+    assert "--clusterrole=kserve-metrics-reader-cluster-role" in create_calls[0]
+    assert "--clusterrole=kserve-metrics-reader" in create_calls[1]
+
+
+def test_ensure_metrics_rbac_skips_when_binding_exists(monkeypatch):
+    """ensure_metrics_rbac returns early if the binding already exists."""
+    from conformance.deployer import Deployer
+
+    d = Deployer(namespace="test-ns")
+    calls = []
+
+    def fake_kubectl(*args, **kwargs):
+        calls.append(args)
+        if args[0] == "get" and args[1] == "clusterrolebinding":
+            return "test-ns-my-svc-metrics-reader"
+        return ""
+
+    monkeypatch.setattr(d, "kubectl", fake_kubectl)
+
+    d.ensure_metrics_rbac("my-svc")
+
+    create_calls = [c for c in calls if c[0] == "create"]
+    assert len(create_calls) == 0
+
+
+def test_scrape_via_exec_https_fails_http_succeeds():
+    """When HTTPS scraping fails, _scrape_via_exec falls back to HTTP and returns metrics."""
+    from conformance.metrics import Scraper
+
+    call_log = []
+
+    def fake_kubectl(*args, **_kwargs):
+        call_log.append(args)
+        cmd_str = " ".join(str(a) for a in args)
+        if "https://" in cmd_str:
+            raise RuntimeError("connection refused")
+        if "http://" in cmd_str and "python3" in cmd_str:
+            return 'epp_metric_total{pod="epp-1"} 42\n'
+        raise RuntimeError("unexpected call")
+
+    scraper = Scraper(kubectl_fn=fake_kubectl, namespace="test-ns")
+    result = scraper._scrape_via_exec("epp-pod", 9090)
+
+    assert "epp_metric_total" in result
+    https_calls = [c for c in call_log if any("https://" in str(a) for a in c)]
+    http_calls = [
+        c for c in call_log if any("http://" in str(a) for a in c) and not any("https://" in str(a) for a in c)
+    ]
+    assert len(https_calls) >= 1
+    assert len(http_calls) >= 1
+
+
+def test_scrape_via_exec_https_succeeds_no_http_fallback():
+    """When HTTPS scraping succeeds, _scrape_via_exec does not try HTTP."""
+    from conformance.metrics import Scraper
+
+    call_log = []
+
+    def fake_kubectl(*args, **_kwargs):
+        call_log.append(args)
+        cmd_str = " ".join(str(a) for a in args)
+        if "https://" in cmd_str and "python3" in cmd_str:
+            return 'vllm:request_success_total{model="m"} 10\n'
+        raise RuntimeError("should not reach http")
+
+    scraper = Scraper(kubectl_fn=fake_kubectl, namespace="test-ns")
+    result = scraper._scrape_via_exec("workload-pod", 8000)
+
+    assert "vllm:request_success_total" in result
+    http_only = [c for c in call_log if any("http://" in str(a) and "https://" not in str(a) for a in c)]
+    assert len(http_only) == 0
+
+
+def test_scrape_via_exec_all_fail_raises():
+    """When all scraping attempts fail, _scrape_via_exec raises RuntimeError."""
+    from conformance.metrics import Scraper
+
+    def fake_kubectl(*args, **_kwargs):
+        raise RuntimeError("connection refused")
+
+    scraper = Scraper(kubectl_fn=fake_kubectl, namespace="test-ns")
+
+    with pytest.raises(RuntimeError, match="exec scrape failed.*both https and http"):
+        scraper._scrape_via_exec("broken-pod", 9090)
+
+
 def test_new_testcase_script_rejects_duplicate(tmp_path, monkeypatch):
     """new-testcase.sh must refuse to overwrite an existing config."""
     import subprocess
