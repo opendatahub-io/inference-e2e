@@ -359,8 +359,16 @@ def test_wait_aitenant_ready_tolerates_a_missing_tenant_config():
     fake = FakeKubectl()
     fake.serve("aitenants", NAME, _aitenant_json(phase="Pending", tenant_namespace=TENANT_NS, ready="False"))
 
-    with pytest.raises((RuntimeError, TimeoutError), match="MaasTenantConfig/default-tenant"):
+    with pytest.raises(TimeoutError, match="MaasTenantConfig/default-tenant"):
         wait_aitenant_ready(fake, NAME, timeout=0.2, poll_interval=0)
+
+
+def test_wait_aitenant_ready_fast_fails_only_terminal_aitenant_phase():
+    fake = FakeKubectl()
+    fake.serve("aitenants", NAME, _aitenant_json(phase="Failed", tenant_namespace="", ready="False"))
+
+    with pytest.raises(RuntimeError, match="phase=Failed"):
+        wait_aitenant_ready(fake, NAME, timeout=30, poll_interval=0)
 
 
 # --- payload-processing annotation contract -----------------------------------
@@ -803,9 +811,10 @@ def test_failed_bootstrap_still_cleans_up_every_test_owned_resource():
         json.dumps(
             {
                 "status": {
+                    "phase": "Failed",
                     "conditions": [
                         {"type": "Ready", "status": "False", "message": "apply ClusterRole /maas-api: forbidden"}
-                    ]
+                    ],
                 }
             }
         ),

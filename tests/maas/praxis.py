@@ -263,9 +263,10 @@ def check_praxis_prerequisites(kubectl: Callable[..., str]) -> None:
         )
 
 
-def _aitenant_not_ready_detail(kubectl: Callable[..., str], aitenant: dict) -> str:
-    """Why the AITenant is not Ready: its own status plus its MaasTenantConfig's conditions."""
+def _aitenant_not_ready_detail(kubectl: Callable[..., str], aitenant: dict) -> tuple[str, bool]:
+    """Why the AITenant is not Ready, and whether its state is terminally failed."""
     status = aitenant.get("status") or {}
+    failed = status.get("phase") == "Failed"
     parts = [f"phase={status.get('phase', 'Pending')}"]
     parts += _false_condition_messages(status.get("conditions"))
     tenant_namespace = status.get("tenantNamespace", "")
@@ -275,15 +276,17 @@ def _aitenant_not_ready_detail(kubectl: Callable[..., str], aitenant: dict) -> s
         except RuntimeError:
             parts.append(f"MaasTenantConfig/{TENANT_CONFIG_NAME} not found in {tenant_namespace}")
         else:
-            parts += _false_condition_messages((config.get("status") or {}).get("conditions"))
-    return "; ".join(parts)
+            config_status = config.get("status") or {}
+            failed = failed or config_status.get("phase") == "Failed"
+            parts += _false_condition_messages(config_status.get("conditions"))
+    return "; ".join(parts), failed
 
 
 def wait_aitenant_ready(kubectl: Callable[..., str], name: str, timeout: float, poll_interval: float = 5) -> dict:
     """Wait for ``AITenant/{name}`` Ready=True; return its status.
 
-    Fails fast when the not-Ready detail is identical across consecutive polls (a stuck
-    controller, e.g. the tenant-config reconcile error) and otherwise times out with the
+    Fails fast when a terminal not-Ready detail is identical across consecutive polls
+    (e.g. a stuck tenant-config reconcile error) and otherwise times out with the
     observed status, always including the MaasTenantConfig conditions as diagnostics.
     """
     deadline = time.monotonic() + timeout
@@ -294,8 +297,8 @@ def wait_aitenant_ready(kubectl: Callable[..., str], name: str, timeout: float, 
         status = aitenant.get("status") or {}
         if _condition_true(status.get("conditions"), "Ready"):
             return status
-        detail = _aitenant_not_ready_detail(kubectl, aitenant)
-        strikes = strikes + 1 if detail == persistent_detail else 1
+        detail, failed = _aitenant_not_ready_detail(kubectl, aitenant)
+        strikes = strikes + 1 if failed and detail == persistent_detail else (1 if failed else 0)
         persistent_detail = detail
         if strikes >= _FAILED_POLLS:
             raise RuntimeError(f"AITenant/{name} is not Ready: {detail}")
