@@ -29,6 +29,70 @@ from conformance.metrics import ScrapeResult, parse_prometheus, validate_flow_co
 from conformance.client import LLMClient
 
 
+@pytest.mark.parametrize("failure_at", [None, "role", "token"])
+def test_inference_token_scopes_access_and_cleans_up(monkeypatch, failure_at):
+    from conformance.deployer import Deployer
+
+    deployer = Deployer(namespace="test-models")
+    calls = []
+
+    def kubectl(*args, **kwargs):
+        calls.append(args)
+        if args[:2] == ("create", failure_at):
+            raise RuntimeError("auth setup failed")
+        return "test-token" if args[:2] == ("create", "token") else ""
+
+    monkeypatch.setattr(deployer, "kubectl", kubectl)
+    if failure_at:
+        with pytest.raises(RuntimeError, match="auth setup failed"):
+            with deployer.inference_token(["model-a", "model-b"]):
+                pytest.fail("failed setup must not yield a token")
+    else:
+        with deployer.inference_token(["model-a", "model-b"]) as token:
+            assert token == "test-token"
+            assert not any(call[0] == "delete" for call in calls)
+
+    name = calls[0][2]
+    role = next(call for call in calls if call[:2] == ("create", "role"))
+    assert "--verb=get" in role
+    assert "--resource=llminferenceservices.serving.kserve.io" in role
+    assert [arg for arg in role if arg.startswith("--resource-name=")] == [
+        "--resource-name=model-a",
+        "--resource-name=model-b",
+    ]
+    assert all(call[call.index("-n") + 1] == "test-models" for call in calls)
+    assert calls[-1][:3] == ("delete", "rolebinding,role,serviceaccount", name)
+
+
+def test_inference_auth_fixture_supplies_client_and_honors_nocleanup(monkeypatch):
+    from types import SimpleNamespace
+    from conftest import bearer_token, client
+    from conformance.deployer import Deployer
+
+    deployer = Deployer(namespace="test-models")
+    calls = []
+    monkeypatch.setattr(deployer, "kubectl", lambda *args, **kwargs: calls.append(args) or "test-token")
+    monkeypatch.setattr(deployer, "manifest_service_names", lambda tc: [tc.name])
+    options = {"--nocleanup": True}
+    request = SimpleNamespace(config=SimpleNamespace(getoption=options.get))
+    tc = load_testcase("configs/testcases/single-gpu-smoke.yaml")
+    fixture = bearer_token.__wrapped__(deployer, tc, request)
+    token = next(fixture)
+    http_client = client.__wrapped__("http://example.test", token)
+    assert next(http_client)._client.headers["Authorization"] == "Bearer test-token"
+    http_client.close()
+    fixture.close()
+    assert not any(call[0] == "delete" for call in calls)
+
+    for supplied, disabled in [("provided-token", False), ("", True), ("provided-token", True)]:
+        options.update({"--bearer-token": supplied, "--disable-auth": disabled})
+        calls.clear()
+        fixture = bearer_token.__wrapped__(deployer, tc, request)
+        assert next(fixture) == supplied
+        fixture.close()
+        assert calls == []
+
+
 def test_parse_duration():
     assert parse_duration("15m").total_seconds() == 900
     assert parse_duration("2h").total_seconds() == 7200

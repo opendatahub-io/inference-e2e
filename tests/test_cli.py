@@ -15,6 +15,20 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 from conformance.config import load_testcase
 
 
+@pytest.mark.parametrize("auth_args", [[], ["--disable-auth"], ["--bearer-token", "provided-token"]])
+def test_auth_options_are_forwarded_to_pytest(monkeypatch, auth_args):
+    import conformance.cli as cli
+
+    commands = []
+    monkeypatch.setattr(sys, "argv", ["llm-d-e2e", "-t", "single-gpu-smoke", *auth_args])
+    monkeypatch.setattr(cli, "_run_pytest", lambda cmd: commands.append(cmd) or 0)
+    with pytest.raises(SystemExit) as result:
+        cli.main()
+    assert result.value.code == 0
+    assert all(arg in commands[0] for arg in auth_args)
+    assert "--service-account-auth" not in commands[0]
+
+
 def test_setup_manifests_removes_stale_files(tmp_path, monkeypatch):
     """Switching manifest branches must remove stale files from the previous branch."""
     import shutil
