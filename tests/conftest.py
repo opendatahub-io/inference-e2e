@@ -79,6 +79,13 @@ def pytest_addoption(parser):
     parser.addoption("--prefill-node-selector", default="", help="Node selector for prefill pods (key=value)")
 
 
+def pytest_configure(config):
+    """Record the active --profile so 3.6-only Praxis phases can gate at collection time."""
+    from maas.praxis import set_profile_path
+
+    set_profile_path(config.getoption("--profile"))
+
+
 def _resolve_test_cases(config) -> list[TestCase]:
     testcase_dir = config.getoption("--testcase-dir")
     profile_path = config.getoption("--profile")
