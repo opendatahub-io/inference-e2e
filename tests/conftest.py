@@ -192,8 +192,19 @@ def endpoint(deployer: Deployer, tc: TestCase, request) -> str:
 
 
 @pytest.fixture(scope="class")
-def client(endpoint: str, request) -> LLMClient:
-    c = LLMClient(base_url=endpoint, bearer_token=request.config.getoption("--bearer-token"))
+def bearer_token(deployer: Deployer, tc: TestCase, request):
+    supplied_token = request.config.getoption("--bearer-token")
+    if supplied_token or request.config.getoption("--disable-auth"):
+        yield supplied_token
+    else:
+        cleanup = tc.cleanup and not request.config.getoption("--nocleanup")
+        with deployer.inference_token(deployer.manifest_service_names(tc), cleanup=cleanup) as token:
+            yield token
+
+
+@pytest.fixture(scope="class")
+def client(endpoint: str, bearer_token: str) -> LLMClient:
+    c = LLMClient(base_url=endpoint, bearer_token=bearer_token)
     yield c
     c.close()
 
@@ -206,8 +217,8 @@ def pod_endpoint(deployer: Deployer, tc: TestCase, request) -> str:
 
 
 @pytest.fixture(scope="class")
-def pod_client(pod_endpoint: str, request) -> LLMClient:
-    c = LLMClient(base_url=pod_endpoint, bearer_token=request.config.getoption("--bearer-token"))
+def pod_client(pod_endpoint: str, bearer_token: str) -> LLMClient:
+    c = LLMClient(base_url=pod_endpoint, bearer_token=bearer_token)
     yield c
     c.close()
 

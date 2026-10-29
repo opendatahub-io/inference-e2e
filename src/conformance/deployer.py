@@ -31,8 +31,10 @@ import socket
 import subprocess
 import tempfile
 import time
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
+from uuid import uuid4
 
 import yaml
 
@@ -389,6 +391,54 @@ class Deployer:
     def cleanup_metrics_rbac(self, name: str):
         binding_name = f"{self.namespace}-{name}-metrics-reader"
         self.kubectl("delete", "clusterrolebinding", binding_name, "--ignore-not-found", check=False)
+
+    @contextmanager
+    def inference_token(self, service_names: list[str], cleanup: bool = True):
+        """Yield a short-lived token with access only to this testcase's models."""
+        if not service_names:
+            raise ValueError("Service-account auth requires at least one LLMInferenceService")
+        name = f"llm-d-e2e-auth-{uuid4().hex[:12]}"
+        namespace = ["-n", self.namespace]
+        try:
+            self.kubectl("create", "serviceaccount", name, *namespace)
+            self.kubectl(
+                "create",
+                "role",
+                name,
+                *namespace,
+                "--verb=get",
+                "--resource=llminferenceservices.serving.kserve.io",
+                *(f"--resource-name={service}" for service in service_names),
+            )
+            self.kubectl(
+                "create",
+                "rolebinding",
+                name,
+                *namespace,
+                f"--role={name}",
+                f"--serviceaccount={self.namespace}:{name}",
+            )
+            token = self.kubectl(
+                "create",
+                "token",
+                name,
+                *namespace,
+                "--duration=1h",
+                "--audience=https://kubernetes.default.svc",
+            ).strip()
+            if not token:
+                raise RuntimeError("TokenRequest returned an empty inference token")
+            yield token
+        finally:
+            if cleanup:
+                self.kubectl(
+                    "delete",
+                    "rolebinding,role,serviceaccount",
+                    name,
+                    *namespace,
+                    "--ignore-not-found",
+                    check=False,
+                )
 
     def is_deployed(self, name: str) -> bool:
         return name in self._deployed

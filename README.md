@@ -90,6 +90,9 @@ e2e -t single-gpu --nocleanup
 # Simulate vLLM with llm-d-inference-sim (no GPU needed)
 e2e -t single-gpu --mock
 
+# Exercise an auth-protected RHOAI inference endpoint with the simulator
+e2e -t single-gpu-smoke --mock
+
 # Run full 3.5 profile (auto-skips tests needing more GPUs than available)
 e2e -p configs/profiles/3.5.yaml
 
@@ -108,6 +111,17 @@ e2e -t single-gpu --kubeconfig ~/.kube/config --namespace my-test-ns
 # Validate an existing deployment (no deploy/cleanup)
 e2e -t single-gpu --mode discover --endpoint http://my-service:8000
 ```
+
+Authentication is enabled by default. Supply `--bearer-token` to use an existing
+identity; otherwise the suite creates a dedicated service account and
+namespace-scoped Role/RoleBinding for each testcase. The Role grants `get` access
+only to that testcase's `LLMInferenceService` resources. A one-hour token is passed
+directly to the conformance HTTP clients. The cluster credential must be allowed
+to create these resources and request service-account tokens. Credentials are
+removed at fixture teardown unless `--nocleanup` or the testcase's `cleanup: false`
+retains them. `--disable-auth` requests anonymous access on the deployed service
+and skips service-account creation. MaaS API-key authentication remains a separate
+flow.
 
 ## Testing an Existing Deployment
 
