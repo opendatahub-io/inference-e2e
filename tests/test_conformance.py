@@ -160,10 +160,10 @@ class LLMDPhases:
         _log(f"Service found: {svc}")
 
     def test_04_gateway(self, deployer: Deployer, tc: TestCase, test_mode: str):
-        """Gateway should be programmed with an address."""
+        """The Gateway the service is routed through should be programmed with an address."""
         _require_deployed(deployer, tc, test_mode)
-        _log("Waiting for Gateway to be programmed...")
-        addr = deployer.wait_for_gateway()
+        _log(f"Waiting for the Gateway of '{tc.name}' to be programmed...")
+        addr = deployer.wait_for_gateway(tc.name)
         _log(f"Gateway address: {addr}")
         assert addr, "Gateway has no address"
 
@@ -506,7 +506,7 @@ class LLMDPhases:
         _require_deployed(deployer, tc, test_mode)
         bc = tc.validation.benchmark
 
-        gateway_addr = deployer.wait_for_gateway(timeout=60)
+        gateway_addr = deployer.wait_for_gateway(tc.name, timeout=60)
         target_url = f"http://{gateway_addr}/{deployer.namespace}/{tc.name}"
         image = guidellm_image or bc.image
 
