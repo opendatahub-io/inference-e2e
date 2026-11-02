@@ -351,6 +351,8 @@ The gRPC probes run in the engine pod with its own `modelexpress` client. ModelE
 
 `modelexpress-p2p` is opt-in (`optIn: true`): it is in no profile and runs only when named.
 
+To admit the engine pods through Kueue, pass `--queue-name <localqueue>`. The LocalQueue must exist in the test namespace, the namespace must be Kueue-managed (`kueue.openshift.io/managed=true` on OpenShift), and its ClusterQueue must cover `rdma/*` as well as `nvidia.com/gpu`; Kueue keeps pods that request an uncovered resource gated.
+
 ```bash
 uv run llm-d-e2e --setup 3.6-GA
 uv run llm-d-e2e -t modelexpress-p2p --platform ocp --rdma-resource rdma/rdma_shared_device_ib --html reports/modelexpress-report.html -v

@@ -82,6 +82,9 @@ def main():
         default="",
         help="Extended resource requested in place of the manifest's rdma/* devices (e.g. rdma/roce_gdr)",
     )
+    parser.add_argument(
+        "--queue-name", default="", help="Kueue LocalQueue in the test namespace that admits the engine pods"
+    )
 
     # Behavior
     parser.add_argument("--nocleanup", action="store_true", help="Keep resources after test")
@@ -158,6 +161,7 @@ def main():
         "decode_node_selector": "--decode-node-selector",
         "prefill_node_selector": "--prefill-node-selector",
         "rdma_resource": "--rdma-resource",
+        "queue_name": "--queue-name",
     }
 
     for attr, flag in flag_map.items():

@@ -2045,3 +2045,16 @@ def test_manifest_rdma_requests_are_kept_without_rdma_resource(tmp_path):
 
     for template in _pod_templates(patched[0]["spec"]):
         assert template["containers"][0]["resources"]["limits"]["rdma/rdma_shared_device_ib"] == "1"
+
+
+def test_queue_name_labels_every_llminferenceservice(tmp_path):
+    from conformance.deployer import QUEUE_NAME_LABEL, Deployer
+
+    tc = load_testcase("configs/testcases/single-gpu-smoke.yaml")
+    manifest_path = _rdma_manifest(tmp_path, "rdma/rdma_shared_device_ib")
+
+    queued = Deployer(manifest_dir=str(tmp_path), queue_name="llm-conformance")._patch_manifest(manifest_path, tc)
+    unqueued = Deployer(manifest_dir=str(tmp_path))._patch_manifest(manifest_path, tc)
+
+    assert queued[0]["metadata"]["labels"][QUEUE_NAME_LABEL] == "llm-conformance"
+    assert QUEUE_NAME_LABEL not in unqueued[0]["metadata"]["labels"]

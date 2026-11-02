@@ -81,6 +81,9 @@ def pytest_addoption(parser):
     parser.addoption(
         "--rdma-resource", default="", help="Extended resource requested in place of the manifest's rdma/* devices"
     )
+    parser.addoption(
+        "--queue-name", default="", help="Kueue LocalQueue in the test namespace that admits the engine pods"
+    )
 
 
 def _resolve_test_cases(config) -> list[TestCase]:
@@ -158,6 +161,7 @@ def deployer(request) -> Deployer:
         decode_node_selector=request.config.getoption("--decode-node-selector"),
         prefill_node_selector=request.config.getoption("--prefill-node-selector"),
         rdma_resource=request.config.getoption("--rdma-resource"),
+        queue_name=request.config.getoption("--queue-name"),
     )
     # The test namespace belongs to the suite: services left by a killed run hold
     # GPUs that this run needs. --nocleanup keeps them for inspection.

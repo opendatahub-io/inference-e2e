@@ -112,6 +112,10 @@ A ModelExpress testcase is a testcase config plus a same-named manifest (e.g. `m
 
 `modelexpress.patch_modelexpress_refs()` moves the address annotation's `<server>.<namespace>.svc` host and the server allowlist to the test namespace, and renames the allowlisted `<service>-kserve` engine ServiceAccount with the primary service. gRPC probes run `src/conformance/modelexpress_probe.py` in the engine pod (`kubectl exec -i ... python3 -c`, request JSON on stdin) because the shipped server image holds only the server binary; `Deployer.kubectl()` takes `input=` for this. The NetworkPolicy check runs a pod with the server image in a namespace of its own (`<namespace>-mx-outsider`, deleted afterwards). Phase 40c scales the service and is skipped in `--mode discover`.
 
+### Kueue
+
+`--queue-name <localqueue>` labels every LLMInferenceService with `kueue.x-k8s.io/queue-name`. KServe copies the label to the engine Deployment and pod template (not to the scheduler), so Kueue admits each engine pod against that LocalQueue; deploy fails fast if the LocalQueue does not exist in the test namespace. The namespace must match Kueue's managed-namespace selector (`kueue.openshift.io/managed=true` on OpenShift), and the ClusterQueue must cover every resource the pods request, including `rdma/*`, or Kueue leaves them gated.
+
 ### Skip propagation
 
 Two helpers control cascading skips across phases:
@@ -155,7 +159,7 @@ The gateway service name and namespace are RHOAI-specific hardcoded values in `d
 ### Source modules (`src/conformance/`)
 
 - **config.py** — Dataclass config types and YAML loaders. YAML keys are camelCase, Python fields are snake_case; `_build()` handles recursive conversion.
-- **deployer.py** — `Deployer`: manages LLMInferenceService lifecycle via `kubectl` subprocess calls. Handles deploy, wait-for-ready, port-forwarding, manifest patching (mock image, pull secrets, auth disable, LoRA spec injection, node selectors, env overrides, `--rdma-resource` renaming of `rdma/*` requests), EPP metrics RBAC, pull secret propagation, namespace labeling for gateway access, and cleanup.
+- **deployer.py** — `Deployer`: manages LLMInferenceService lifecycle via `kubectl` subprocess calls. Handles deploy, wait-for-ready, port-forwarding, manifest patching (mock image, pull secrets, auth disable, LoRA spec injection, node selectors, env overrides, `--rdma-resource` renaming of `rdma/*` requests, `--queue-name` Kueue label), EPP metrics RBAC, pull secret propagation, namespace labeling for gateway access, and cleanup.
 - **client.py** — `LLMClient`: HTTP client (httpx) for `/health`, `/v1/models`, `/v1/completions`, `/v1/chat/completions`, `/v1/messages`, `/v1/responses`.
 - **metrics.py** — `Scraper`: scrapes Prometheus metrics from pods via `kubectl exec` (python3/wget), falling back to port-forward + httpx for minimal containers. Per-topology validators: `validate_vllm_basic`, `validate_cache_aware`, `validate_pd`, `validate_scheduler`, `validate_flow_control`, `validate_lora`. `parse_prometheus()` parses text exposition format.
 - **model.py** — `ModelDownloader`: creates PVCs and download Jobs for pre-caching models from HuggingFace.

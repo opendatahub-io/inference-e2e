@@ -55,6 +55,8 @@ PREFILL_LABEL = "app.kubernetes.io/name={name},app.kubernetes.io/component=llmin
 # Marks LLMInferenceServices this suite deployed, so the start-of-run sweep never
 # touches services it does not own.
 MANAGED_LABEL = "llm-d-e2e.opendatahub.io/managed"
+# KServe copies this label to the engine Deployment and pods, so Kueue admits them against the LocalQueue.
+QUEUE_NAME_LABEL = "kueue.x-k8s.io/queue-name"
 
 OPERATOR_NAMESPACES = ("redhat-ods-applications", "redhat-ods-operator", "rhaii")
 _IMAGE_PULL_FAILURE_REASONS = ("ImagePullBackOff", "ErrImagePull")
@@ -97,6 +99,7 @@ class Deployer:
         prefill_node_selector: str = "",
         model_override: str = "",
         rdma_resource: str = "",
+        queue_name: str = "",
     ):
         self.kubeconfig = kubeconfig
         self.platform = platform
@@ -111,6 +114,7 @@ class Deployer:
         self.prefill_node_selector = _parse_node_selector(prefill_node_selector)
         self.model_override = model_override
         self.rdma_resource = rdma_resource
+        self.queue_name = queue_name
         self._port_forward_proc: subprocess.Popen | None = None
         self._port_forward_port: int = 0
         self._pod_pf_proc: subprocess.Popen | None = None
@@ -620,6 +624,8 @@ class Deployer:
         service_names = self.manifest_service_names(tc)
         try:
             self.ensure_namespace()
+            if self.queue_name:
+                self.kubectl("get", "localqueue", self.queue_name, "-n", self.namespace)
             for name in service_names:
                 self._ensure_clean_slate(name)
             for manifest_doc in manifest_docs:
@@ -1149,6 +1155,8 @@ class Deployer:
                 labels = {}
                 metadata["labels"] = labels
             labels[MANAGED_LABEL] = "true"
+            if self.queue_name:
+                labels[QUEUE_NAME_LABEL] = self.queue_name
 
             spec = manifest.get("spec")
             if not isinstance(spec, dict):
