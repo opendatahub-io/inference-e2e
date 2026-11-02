@@ -105,7 +105,7 @@ def test_load_agentic_serving_testcase():
     """agentic-serving testcase should parse with tools in chatPrompts preserved as dicts."""
     tc = load_testcase("configs/testcases/agentic-serving.yaml")
     assert tc.name == "agentic-serving"
-    assert tc.model.name == "Qwen/Qwen3-Coder-30B-A3B-Instruct-FP8"
+    assert tc.model.name == "Qwen/Qwen3-4B-Instruct-2507"
     assert tc.deployment.requires_gpu is True
     assert tc.validation.inference_check is True
     assert tc.validation.tool_call_max_tokens == 1024
