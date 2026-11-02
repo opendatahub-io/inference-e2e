@@ -29,6 +29,18 @@ def test_auth_options_are_forwarded_to_pytest(monkeypatch, auth_args):
     assert "--service-account-auth" not in commands[0]
 
 
+def test_rdma_resource_is_forwarded_to_pytest(monkeypatch):
+    import conformance.cli as cli
+
+    commands = []
+    monkeypatch.setattr(sys, "argv", ["llm-d-e2e", "-t", "modelexpress-p2p", "--rdma-resource", "rdma/roce_gdr"])
+    monkeypatch.setattr(cli, "_run_pytest", lambda cmd: commands.append(cmd) or 0)
+    with pytest.raises(SystemExit):
+        cli.main()
+    command = commands[0]
+    assert command[command.index("--rdma-resource") + 1] == "rdma/roce_gdr"
+
+
 def test_setup_manifests_removes_stale_files(tmp_path, monkeypatch):
     """Switching manifest branches must remove stale files from the previous branch."""
     import shutil

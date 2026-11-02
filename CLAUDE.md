@@ -51,7 +51,7 @@ Makefile targets mirror CLI: `make test TESTCASE=single-gpu`, `make unittest`, `
 
 ### Test case parametrization
 
-`conftest.py:pytest_generate_tests()` resolves which test cases to run (from `--testcase` names or `--profile` YAML) and parametrizes the `tc` fixture. Each `tc` is a `TestCase` dataclass loaded from `configs/testcases/*.yaml`. `TestConformance` methods run once per test case.
+`conftest.py:pytest_generate_tests()` resolves which test cases to run (from `--testcase` names or `--profile` YAML; with neither, every case except those with `optIn: true`) and parametrizes the `tc` fixture. Each `tc` is a `TestCase` dataclass loaded from `configs/testcases/*.yaml`. `TestConformance` methods run once per test case.
 
 ### Run modes
 
@@ -155,7 +155,7 @@ The gateway service name and namespace are RHOAI-specific hardcoded values in `d
 ### Source modules (`src/conformance/`)
 
 - **config.py** — Dataclass config types and YAML loaders. YAML keys are camelCase, Python fields are snake_case; `_build()` handles recursive conversion.
-- **deployer.py** — `Deployer`: manages LLMInferenceService lifecycle via `kubectl` subprocess calls. Handles deploy, wait-for-ready, port-forwarding, manifest patching (mock image, pull secrets, auth disable, LoRA spec injection, node selectors, env overrides), EPP metrics RBAC, pull secret propagation, namespace labeling for gateway access, and cleanup.
+- **deployer.py** — `Deployer`: manages LLMInferenceService lifecycle via `kubectl` subprocess calls. Handles deploy, wait-for-ready, port-forwarding, manifest patching (mock image, pull secrets, auth disable, LoRA spec injection, node selectors, env overrides, `--rdma-resource` renaming of `rdma/*` requests), EPP metrics RBAC, pull secret propagation, namespace labeling for gateway access, and cleanup.
 - **client.py** — `LLMClient`: HTTP client (httpx) for `/health`, `/v1/models`, `/v1/completions`, `/v1/chat/completions`, `/v1/messages`, `/v1/responses`.
 - **metrics.py** — `Scraper`: scrapes Prometheus metrics from pods via `kubectl exec` (python3/wget), falling back to port-forward + httpx for minimal containers. Per-topology validators: `validate_vllm_basic`, `validate_cache_aware`, `validate_pd`, `validate_scheduler`, `validate_flow_control`, `validate_lora`. `parse_prometheus()` parses text exposition format.
 - **model.py** — `ModelDownloader`: creates PVCs and download Jobs for pre-caching models from HuggingFace.

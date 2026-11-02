@@ -1,7 +1,0 @@
-name: "modelexpress-3.6"
-description: "RHOAI 3.6 ModelExpress conformance tests — requires OpenShift with DSC kserve.modelExpress Managed, 2 GPUs with rdma/rdma_shared_device_ib, and aipcc-pull-secret"
-platform: any
-testCases:
-  - modelexpress-p2p
-parallel: false
-timeout: 60m

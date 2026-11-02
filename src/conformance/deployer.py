@@ -96,6 +96,7 @@ class Deployer:
         decode_node_selector: str = "",
         prefill_node_selector: str = "",
         model_override: str = "",
+        rdma_resource: str = "",
     ):
         self.kubeconfig = kubeconfig
         self.platform = platform
@@ -109,6 +110,7 @@ class Deployer:
         self.decode_node_selector = _parse_node_selector(decode_node_selector)
         self.prefill_node_selector = _parse_node_selector(prefill_node_selector)
         self.model_override = model_override
+        self.rdma_resource = rdma_resource
         self._port_forward_proc: subprocess.Popen | None = None
         self._port_forward_port: int = 0
         self._pod_pf_proc: subprocess.Popen | None = None
@@ -1194,6 +1196,9 @@ class Deployer:
                         else:
                             env_list.append(entry)
 
+            if self.rdma_resource:
+                self._rename_rdma_resources(spec, self.rdma_resource)
+
         patch_maas_refs(manifest_docs, primary_name, tc.name, self.namespace)
         patch_modelexpress_refs(manifest_docs, primary_name, tc.name, self.namespace)
         return manifest_docs
@@ -1269,6 +1274,17 @@ class Deployer:
                 resources.get(section, {}).pop("nvidia.com/gpu", None)
             resources["requests"] = {"cpu": "500m", "memory": "1Gi"}
             resources["limits"] = {"cpu": "1", "memory": "2Gi"}
+
+    @staticmethod
+    def _rename_rdma_resources(spec: dict, resource: str) -> None:
+        """Request ``resource`` wherever a pod template requests an ``rdma/*`` device, keeping the quantity."""
+        prefill = spec.get("prefill") or {}
+        for template in (spec.get("template"), spec.get("worker"), prefill.get("template"), prefill.get("worker")):
+            for container in (template or {}).get("containers") or []:
+                for section in ("limits", "requests"):
+                    quantities = (container.get("resources") or {}).get(section) or {}
+                    for name in [n for n in quantities if n.startswith("rdma/")]:
+                        quantities[resource] = quantities.pop(name)
 
     def _inject_pull_secret(self, spec: dict, secret_name: str):
         for template in self._pod_templates(spec):

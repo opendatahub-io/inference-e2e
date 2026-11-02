@@ -41,6 +41,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 from conformance.config import (
     TestCase,
     apply_manifest_model_config,
+    default_testcases,
     filter_by_names,
     load_profile,
     load_testcases_from_dir,
@@ -77,6 +78,9 @@ def pytest_addoption(parser):
     parser.addoption("--guidellm-image", default="", help="GuideLLM benchmark image override")
     parser.addoption("--decode-node-selector", default="", help="Node selector for decode pods (key=value)")
     parser.addoption("--prefill-node-selector", default="", help="Node selector for prefill pods (key=value)")
+    parser.addoption(
+        "--rdma-resource", default="", help="Extended resource requested in place of the manifest's rdma/* devices"
+    )
 
 
 def _resolve_test_cases(config) -> list[TestCase]:
@@ -92,6 +96,8 @@ def _resolve_test_cases(config) -> list[TestCase]:
         if testcase_names:
             names = [n.strip() for n in testcase_names.split(",")]
             cases = filter_by_names(cases, names)
+        else:
+            cases = default_testcases(cases)
 
     manifest_dir = Path(config.rootpath) / "deploy" / "manifests"
     model_override = config.getoption("--model")
@@ -151,6 +157,7 @@ def deployer(request) -> Deployer:
         disable_auth=request.config.getoption("--disable-auth"),
         decode_node_selector=request.config.getoption("--decode-node-selector"),
         prefill_node_selector=request.config.getoption("--prefill-node-selector"),
+        rdma_resource=request.config.getoption("--rdma-resource"),
     )
     # The test namespace belongs to the suite: services left by a killed run hold
     # GPUs that this run needs. --nocleanup keeps them for inspection.

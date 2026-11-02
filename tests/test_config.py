@@ -12,6 +12,8 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 from conformance.config import (
     chat_prompt_to_messages,
+    default_testcases,
+    filter_by_names,
     iter_config_yamls,
     load_profile,
     load_profiles_from_dir,
@@ -49,6 +51,17 @@ def test_load_all_testcases():
     assert len(cases) >= 1
     names = [tc.name for tc in cases]
     assert "single-gpu-smoke" in names
+
+
+def test_a_run_naming_no_testcase_leaves_out_opt_in_cases():
+    cases = load_testcases_from_dir("configs/testcases")
+
+    selected = [tc.name for tc in default_testcases(cases)]
+
+    assert load_testcase("configs/testcases/modelexpress-p2p.yaml").opt_in
+    assert "modelexpress-p2p" not in selected
+    assert "single-gpu-smoke" in selected
+    assert [tc.name for tc in filter_by_names(cases, ["modelexpress-p2p"])] == ["modelexpress-p2p"]
 
 
 def test_dir_loaders_skip_readme(tmp_path):

@@ -1990,3 +1990,58 @@ def test_new_testcase_script_rejects_duplicate(tmp_path, monkeypatch):
     result = subprocess.run([str(script), "dupe-test"], capture_output=True, text=True)
     assert result.returncode != 0
     assert "already exists" in result.stdout or "already exists" in result.stderr
+
+
+def _rdma_manifest(tmp_path, resource: str) -> Path:
+    import yaml
+
+    def template():
+        quantities = {"nvidia.com/gpu": "1", resource: "1"}
+        return {
+            "containers": [{"name": "main", "resources": {"limits": dict(quantities), "requests": dict(quantities)}}]
+        }
+
+    manifest_path = tmp_path / "single-gpu-smoke.yaml"
+    manifest = {
+        "apiVersion": "serving.kserve.io/v1alpha2",
+        "kind": "LLMInferenceService",
+        "metadata": {"name": "single-gpu-smoke"},
+        "spec": {
+            "model": {"uri": "hf://Qwen/Qwen3-0.6B", "name": "Qwen/Qwen3-0.6B"},
+            "template": template(),
+            "worker": template(),
+            "prefill": {"replicas": 1, "template": template(), "worker": template()},
+        },
+    }
+    manifest_path.write_text(yaml.dump(manifest))
+    return manifest_path
+
+
+def _pod_templates(spec: dict) -> list[dict]:
+    return [spec["template"], spec["worker"], spec["prefill"]["template"], spec["prefill"]["worker"]]
+
+
+def test_rdma_resource_replaces_rdma_requests_in_every_pod_template(tmp_path):
+    from conformance.deployer import Deployer
+
+    tc = load_testcase("configs/testcases/single-gpu-smoke.yaml")
+    manifest_path = _rdma_manifest(tmp_path, "rdma/rdma_shared_device_ib")
+
+    patched = Deployer(manifest_dir=str(tmp_path), rdma_resource="rdma/roce_gdr")._patch_manifest(manifest_path, tc)
+
+    for template in _pod_templates(patched[0]["spec"]):
+        resources = template["containers"][0]["resources"]
+        assert resources["limits"] == {"nvidia.com/gpu": "1", "rdma/roce_gdr": "1"}
+        assert resources["requests"] == {"nvidia.com/gpu": "1", "rdma/roce_gdr": "1"}
+
+
+def test_manifest_rdma_requests_are_kept_without_rdma_resource(tmp_path):
+    from conformance.deployer import Deployer
+
+    tc = load_testcase("configs/testcases/single-gpu-smoke.yaml")
+    manifest_path = _rdma_manifest(tmp_path, "rdma/rdma_shared_device_ib")
+
+    patched = Deployer(manifest_dir=str(tmp_path))._patch_manifest(manifest_path, tc)
+
+    for template in _pod_templates(patched[0]["spec"]):
+        assert template["containers"][0]["resources"]["limits"]["rdma/rdma_shared_device_ib"] == "1"

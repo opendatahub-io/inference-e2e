@@ -349,11 +349,14 @@ The benchmark adds three phases after the standard conformance checks:
 
 The gRPC probes run in the engine pod with its own `modelexpress` client. ModelExpress phases live in `tests/modelexpress/` and are deselected for test cases whose manifest declares no `ModelExpressServer`.
 
+`modelexpress-p2p` is opt-in (`optIn: true`): it is in no profile and runs only when named.
+
 ```bash
-uv run llm-d-e2e -p configs/profiles/modelexpress-3.6.yaml --setup 3.6-GA --platform ocp --html reports/modelexpress-report.html -v
+uv run llm-d-e2e --setup 3.6-GA
+uv run llm-d-e2e -t modelexpress-p2p --platform ocp --rdma-resource rdma/rdma_shared_device_ib --html reports/modelexpress-report.html -v
 ```
 
-Prerequisites (ModelExpress): OpenShift with RHOAI 3.6 and DSC `kserve.modelExpress: Managed`, 2 GPUs with `rdma/rdma_shared_device_ib`, and `aipcc-pull-secret` in the test namespace for the engine image (the default vLLM preset image does not include the `modelexpress` client).
+Prerequisites (ModelExpress): OpenShift with RHOAI 3.6 and DSC `kserve.modelExpress: Managed`, 2 GPUs with an RDMA device (`--rdma-resource` names the cluster's device-plugin resource in place of the manifest's `rdma/rdma_shared_device_ib`), and `aipcc-pull-secret` in the test namespace for the engine image (the default vLLM preset image does not include the `modelexpress` client).
 
 ## MaaS Tests
 

@@ -77,6 +77,11 @@ def main():
     # Node placement
     parser.add_argument("--decode-node-selector", default="", help="Node selector for decode pods (key=value)")
     parser.add_argument("--prefill-node-selector", default="", help="Node selector for prefill pods (key=value)")
+    parser.add_argument(
+        "--rdma-resource",
+        default="",
+        help="Extended resource requested in place of the manifest's rdma/* devices (e.g. rdma/roce_gdr)",
+    )
 
     # Behavior
     parser.add_argument("--nocleanup", action="store_true", help="Keep resources after test")
@@ -152,6 +157,7 @@ def main():
         "guidellm_image": "--guidellm-image",
         "decode_node_selector": "--decode-node-selector",
         "prefill_node_selector": "--prefill-node-selector",
+        "rdma_resource": "--rdma-resource",
     }
 
     for attr, flag in flag_map.items():
