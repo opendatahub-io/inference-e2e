@@ -1,13 +1,13 @@
 name: agentic-serving
-description: "Agentic serving with tool-calling (Qwen3-1.7B), single GPU, 1 replica"
+description: "Agentic serving with tool-calling (Qwen3-4B-Instruct-2507), single GPU, 1 replica"
 model:
-  name: Qwen/Qwen3-1.7B
-  uri: hf://Qwen/Qwen3-1.7B
-  displayName: qwen3-1.7b-agentic-serving
+  name: Qwen/Qwen3-4B-Instruct-2507
+  uri: hf://Qwen/Qwen3-4B-Instruct-2507
+  displayName: qwen3-4b-instruct-2507-agentic-serving
   category: agentic-serving
   cache:
     enabled: true
-    storageSize: 10Gi
+    storageSize: 20Gi
     keepPVC: true
     timeout: 15m
 deployment:
