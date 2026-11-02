@@ -1,19 +1,19 @@
 name: agentic-serving
-description: "Agentic serving with tool-calling (Qwen3-Coder-30B-A3B MoE), single GPU, 1 replica"
+description: "Agentic serving with tool-calling (Qwen3-1.7B), single GPU, 1 replica"
 model:
-  name: Qwen/Qwen3-Coder-30B-A3B-Instruct-FP8
-  uri: hf://Qwen/Qwen3-Coder-30B-A3B-Instruct-FP8
-  displayName: qwen3-coder-30b-agentic-serving
+  name: Qwen/Qwen3-1.7B
+  uri: hf://Qwen/Qwen3-1.7B
+  displayName: qwen3-1.7b-agentic-serving
   category: agentic-serving
   cache:
     enabled: true
-    storageSize: 100Gi
+    storageSize: 10Gi
     keepPVC: true
-    timeout: 30m
+    timeout: 15m
 deployment:
   manifestPath: tool-calling.yaml
   requiresGpu: true
-  readyTimeout: 20m
+  readyTimeout: 15m
 validation:
   healthEndpoint: /health
   healthPort: 8000
