@@ -14,7 +14,8 @@ Deploy / patch:
   - EPP metrics RBAC (``ClusterRoleBinding``) for authenticated scrape
 
 Wait / diagnose:
-  - Service, Gateway, pods, Ready condition; CrashLoopBackOff early fail
+  - Service, the Gateway the service's HTTPRoute attaches to, pods, Ready
+    condition; CrashLoopBackOff early fail
   - Persistent Ready reason+message fast-fail; operator ImagePullBackOff
     hints in ``OPERATOR_NAMESPACES``
 
@@ -34,6 +35,7 @@ import time
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
+from urllib.parse import urlsplit
 from uuid import uuid4
 
 import yaml
@@ -59,6 +61,10 @@ OPERATOR_NAMESPACES = ("redhat-ods-applications", "redhat-ods-operator", "rhaii"
 _IMAGE_PULL_FAILURE_REASONS = ("ImagePullBackOff", "ErrImagePull")
 _TRANSIENT_READY_REASONS = frozenset({"MinimumReplicasUnavailable", "HTTPRoutesNotReady", "WaitingForGateway"})
 
+GATEWAY_API_GROUP = "gateway.networking.k8s.io"
+# Set by gateway controllers on the resources they generate for a Gateway (GEP-1762).
+GATEWAY_NAME_LABEL = f"{GATEWAY_API_GROUP}/gateway-name"
+
 
 def _parse_node_selector(value: str) -> dict[str, str]:
     """Parse 'key=value' into a dict, or return empty dict."""
@@ -66,6 +72,50 @@ def _parse_node_selector(value: str) -> dict[str, str]:
         return {}
     k, v = value.split("=", 1)
     return {k.strip(): v.strip()}
+
+
+@dataclass(frozen=True)
+class GatewayRef:
+    namespace: str
+    name: str
+    section_name: str = ""
+
+    def __str__(self) -> str:
+        return f"{self.namespace}/{self.name}"
+
+
+def _condition(obj: dict, condition_type: str) -> dict:
+    return next((c for c in obj.get("status", {}).get("conditions", []) if c.get("type") == condition_type), {})
+
+
+def route_gateway(route: dict) -> GatewayRef | None:
+    """First Gateway in an HTTPRoute's ``spec.parentRefs``.
+
+    Applies the Gateway API defaults: group ``gateway.networking.k8s.io``, kind
+    ``Gateway``, and the route's own namespace.
+    """
+    route_namespace = route.get("metadata", {}).get("namespace", "")
+    for parent in route.get("spec", {}).get("parentRefs", []):
+        if parent.get("group", GATEWAY_API_GROUP) == GATEWAY_API_GROUP and parent.get("kind", "Gateway") == "Gateway":
+            return GatewayRef(parent.get("namespace", route_namespace), parent["name"], parent.get("sectionName", ""))
+    return None
+
+
+def gateway_address(gateway: dict) -> str:
+    """First ``status.addresses`` value once the Gateway is Programmed, else ``""``."""
+    addresses = gateway.get("status", {}).get("addresses") or []
+    if _condition(gateway, "Programmed").get("status") != "True" or not addresses:
+        return ""
+    return addresses[0].get("value", "")
+
+
+def gateway_http_port(gateway: dict, section_name: str = "") -> int:
+    """Port of the HTTP listener a route attaches to: *section_name* when set, else the first HTTP listener."""
+    for listener in gateway.get("spec", {}).get("listeners", []):
+        if listener.get("protocol") == "HTTP" and section_name in ("", listener.get("name")):
+            return int(listener["port"])
+    wanted = f"HTTP listener {section_name!r}" if section_name else "HTTP listener"
+    raise RuntimeError(f"Gateway {gateway.get('metadata', {}).get('name', '')} has no {wanted}")
 
 
 @dataclass
@@ -110,6 +160,7 @@ class Deployer:
         self.model_override = model_override
         self._port_forward_proc: subprocess.Popen | None = None
         self._port_forward_port: int = 0
+        self._port_forward_target: tuple[str, str, int] | None = None
         self._pod_pf_proc: subprocess.Popen | None = None
         self._pod_pf_port: int = 0
         self._pod_pf_name: str = ""
@@ -849,33 +900,58 @@ class Deployer:
             time.sleep(10)
         raise TimeoutError(f"Service for {name} not found after {timeout}s")
 
-    def wait_for_httproute(self, name: str, timeout: float = 300) -> bool:
-        deadline = time.time() + timeout
-        route_name = f"{name}-kserve-route"
-        while time.time() < deadline:
-            if self.check_resource_exists("httproute", route_name):
-                return True
-            time.sleep(10)
-        raise TimeoutError(f"HTTPRoute {route_name} not found after {timeout}s")
+    def service_gateway(self, name: str) -> GatewayRef:
+        """The Gateway that LLMInferenceService *name* is routed through.
 
-    def wait_for_gateway(self, timeout: float = 300) -> str:
+        Read from the parentRefs of the ``<name>-kserve-route`` HTTPRoute KServe
+        creates, which hold both explicit ``spec.router.gateway.refs`` and the
+        platform default gateway.
+        """
+        route_name = f"{name}-kserve-route"
+        route = json.loads(self.kubectl("get", "httproute", route_name, "-n", self.namespace, "-o", "json"))
+        ref = route_gateway(route)
+        if ref is None:
+            raise RuntimeError(f"HTTPRoute {route_name} has no Gateway parentRef")
+        return ref
+
+    def _get_gateway(self, ref: GatewayRef) -> dict:
+        return json.loads(self.kubectl("get", "gateway", ref.name, "-n", ref.namespace, "-o", "json"))
+
+    def gateway_service(self, ref: GatewayRef) -> str:
+        """Name of the Service the gateway controller generated for *ref*."""
+        names = self.kubectl(
+            "get",
+            "svc",
+            "-n",
+            ref.namespace,
+            "-l",
+            f"{GATEWAY_NAME_LABEL}={ref.name}",
+            "-o",
+            "jsonpath={.items[*].metadata.name}",
+        ).split()
+        if not names:
+            raise RuntimeError(f"No Service labeled {GATEWAY_NAME_LABEL}={ref.name} in {ref.namespace}")
+        return names[0]
+
+    def wait_for_gateway(self, name: str, timeout: float = 300) -> str:
+        """Wait for the Gateway LLMInferenceService *name* is routed through to be Programmed; return its address."""
         deadline = time.time() + timeout
+        state = "not checked"
         while time.time() < deadline:
             try:
-                output = self.kubectl(
-                    "get",
-                    "gateway",
-                    "-A",
-                    "-o",
-                    "jsonpath={.items[0].status.addresses[0].value}",
-                    check=False,
-                )
-                if output:
-                    return output
-            except RuntimeError:
-                pass
+                ref = self.service_gateway(name)
+                gateway = self._get_gateway(ref)
+            except RuntimeError as e:
+                state = str(e)
+            else:
+                address = gateway_address(gateway)
+                if address:
+                    return address
+                programmed = _condition(gateway, "Programmed")
+                state = f"Gateway {ref} Programmed={programmed.get('status', 'Unknown')}"
+                state += f": {programmed.get('message') or 'no address'}"
             time.sleep(10)
-        raise TimeoutError(f"Gateway not programmed after {timeout}s")
+        raise TimeoutError(f"Gateway for {name} not programmed after {timeout}s ({state})")
 
     def wait_for_pods(self, name: str | list[str], timeout: float = 600, print_fn=None, min_pods: int = 1) -> list[str]:
         names = [name] if isinstance(name, str) else name
@@ -955,54 +1031,51 @@ class Deployer:
         raise TimeoutError(f"InferencePool for {name} not found after {timeout}s")
 
     def get_endpoint(self, name: str) -> str:
-        try:
-            url = self.kubectl(
-                "get",
-                "llminferenceservice",
-                name,
-                "-n",
-                self.namespace,
-                "-o",
-                "jsonpath={.status.url}",
-            )
-            if url:
-                path = url.split("//", 1)[-1].split("/", 1)
-                path_suffix = f"/{path[1]}" if len(path) > 1 else f"/{self.namespace}/{name}"
-                local_url = self._ensure_port_forward(path_suffix)
-                if local_url:
-                    return local_url
-                return url
-        except RuntimeError:
-            pass
-        gateway_addr = self.wait_for_gateway()
-        return f"http://{gateway_addr}/{self.namespace}/{name}"
+        """Inference base URL: a local port-forward to the service's Gateway, else ``status.url``."""
+        url = self.kubectl(
+            "get",
+            "llminferenceservice",
+            name,
+            "-n",
+            self.namespace,
+            "-o",
+            "jsonpath={.status.url}",
+            check=False,
+        )
+        path = urlsplit(url).path or f"/{self.namespace}/{name}"
+        return self._ensure_port_forward(name, path) or url or f"http://{self.wait_for_gateway(name)}{path}"
 
     def _find_free_port(self) -> int:
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
             s.bind(("", 0))
             return s.getsockname()[1]
 
-    def _ensure_port_forward(self, path: str) -> str | None:
+    def _ensure_port_forward(self, name: str, path: str) -> str | None:
+        """Port-forward to the Service of the Gateway LLMInferenceService *name* is routed through."""
+        ref = self.service_gateway(name)
+        target = (ref.namespace, self.gateway_service(ref), gateway_http_port(self._get_gateway(ref), ref.section_name))
         if self._port_forward_proc and self._port_forward_proc.poll() is None:
-            return f"http://localhost:{self._port_forward_port}{path}"
+            if self._port_forward_target == target:
+                return f"http://localhost:{self._port_forward_port}{path}"
+            self._stop_gateway_port_forward()
 
+        namespace, service, port = target
         local_port = self._find_free_port()
-        gateway_svc = "svc/inference-gateway-istio"
-        gateway_ns = "redhat-ods-applications"
-
         cmd = ["kubectl"]
         if self.kubeconfig:
             cmd += ["--kubeconfig", self.kubeconfig]
-        cmd += ["port-forward", "-n", gateway_ns, gateway_svc, f"{local_port}:80"]
+        cmd += ["port-forward", "-n", namespace, f"svc/{service}", f"{local_port}:{port}"]
 
-        log.info("Starting port-forward: localhost:%d → %s:80", local_port, gateway_svc)
+        log.info("Starting port-forward: localhost:%d → %s/svc/%s:%d", local_port, namespace, service, port)
         self._port_forward_proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         self._port_forward_port = local_port
+        self._port_forward_target = target
 
         time.sleep(3)
         if self._port_forward_proc.poll() is not None:
             log.warning("Port-forward failed to start")
             self._port_forward_proc = None
+            self._port_forward_target = None
             return None
 
         return f"http://localhost:{local_port}{path}"
@@ -1055,11 +1128,15 @@ class Deployer:
             self._pod_pf_port = 0
             self._pod_pf_name = ""
 
-    def stop_port_forward(self):
+    def _stop_gateway_port_forward(self):
         if self._port_forward_proc:
             self._port_forward_proc.terminate()
             self._port_forward_proc.wait(timeout=5)
             self._port_forward_proc = None
+            self._port_forward_target = None
+
+    def stop_port_forward(self):
+        self._stop_gateway_port_forward()
         self._stop_pod_port_forward()
         log.info("Port-forwards stopped")
 

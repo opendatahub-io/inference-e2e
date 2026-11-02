@@ -69,7 +69,7 @@ The `--mode` flag controls which phases execute:
 | 01 | `test_01_prereq` | CRD exists, manifest present |
 | 02 | `test_02_deploy` | Apply LLMInferenceService manifest |
 | 03 | `test_03_service` | Service creation |
-| 04 | `test_04_gateway` | Gateway programmed with address |
+| 04 | `test_04_gateway` | The service's Gateway (HTTPRoute `parentRef`) programmed with address |
 | 05 | `test_05_pods` | Pods running without crashes |
 | 06 | `test_06_ready` | LLMInferenceService Ready=True |
 | 07 | `test_07_health` | GET /health (direct pod, bypasses EPP) |
@@ -130,10 +130,10 @@ Leftover LLMInferenceServices hold GPUs, so later test cases stay Pending. The s
 ### Endpoint routing (gateway vs pod)
 
 Health and models endpoints return 503 through the Gateway API + EPP because EPP only handles inference. The suite uses two separate port-forwards:
-- **Gateway** (`client` fixture): `svc/inference-gateway-istio:80` (HTTP) in `redhat-ods-applications` — for `/v1/chat/completions`, `/v1/messages`, `/v1/responses`.
+- **Gateway** (`client` fixture): the Service of the Gateway the LLMInferenceService is routed through, on that Gateway's HTTP listener port — for `/v1/chat/completions`, `/v1/messages`, `/v1/responses`.
 - **Pod** (`pod_client` fixture): `workload-pod:8000` in the test namespace — for `/health` and `/v1/models`. HTTPS (self-signed).
 
-The gateway service name and namespace are RHOAI-specific hardcoded values in `deployer.py:_ensure_port_forward()`.
+`Deployer.service_gateway()` reads the first Gateway `parentRef` of the service's `<name>-kserve-route` HTTPRoute, which covers both explicit `spec.router.gateway.refs` and the platform default (`openshift-ingress/openshift-ai-inference` on OpenShift, `redhat-ods-applications/inference-gateway` on xKS). Phase 04 (`wait_for_gateway()`) waits for that Gateway to be `Programmed` with an address; other Gateways in the cluster are ignored. The port-forward targets the Service labeled `gateway.networking.k8s.io/gateway-name=<gateway>` in the Gateway's namespace.
 
 ### Fixture scoping
 
