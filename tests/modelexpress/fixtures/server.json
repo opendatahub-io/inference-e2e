@@ -1,0 +1,58 @@
+{
+  "apiVersion": "modelexpress.opendatahub.io/v1alpha1",
+  "kind": "ModelExpressServer",
+  "metadata": {
+    "name": "modelexpress",
+    "namespace": "llm-conformance-test"
+  },
+  "spec": {
+    "metadataBackend": {
+      "kubernetes": {}
+    },
+    "networkPolicy": {
+      "allowFrom": [
+        {
+          "podSelector": {}
+        }
+      ]
+    },
+    "port": 8001,
+    "replicas": 1,
+    "security": {
+      "allowedServiceAccounts": [
+        {
+          "namespace": "llm-conformance-test",
+          "serviceAccount": "modelexpress-p2p-kserve"
+        }
+      ],
+      "mode": "enforce",
+      "tenantIsolation": "enforce",
+      "tokenAudiences": [
+        "modelexpress"
+      ]
+    },
+    "serviceMetadata": {
+      "annotations": {
+        "service.beta.openshift.io/serving-cert-secret-name": "modelexpress-tls"
+      }
+    },
+    "tls": {
+      "secretName": "modelexpress-tls"
+    }
+  },
+  "status": {
+    "endpoint": "https://modelexpress.llm-conformance-test.svc.cluster.local:8001",
+    "conditions": [
+      {
+        "type": "Ready",
+        "status": "True",
+        "reason": "Applied"
+      },
+      {
+        "type": "NetworkPolicyReady",
+        "status": "True",
+        "reason": "Applied"
+      }
+    ]
+  }
+}

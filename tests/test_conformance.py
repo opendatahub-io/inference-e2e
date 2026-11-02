@@ -23,6 +23,8 @@ config, when the manifest is missing, or when deploy failed / discover mode):
   20. Benchmark — GuideLLM Job; optional warmup; performance thresholds
   21. Metrics (post-benchmark) — re-validate P/D after load
   30a-e. MaaS — governed route checks (tests/maas/phases.py; skip without a MaaSModelRef)
+  40a-f. ModelExpress — server, engine wiring, P2P scale-out, TLS, auth, NetworkPolicy
+         (tests/modelexpress/phases.py; skip without a ModelExpressServer)
   99. Cleanup — delete LLMInferenceService (honors --nocleanup / tc.cleanup)
 """
 
@@ -51,6 +53,7 @@ from conformance.metrics import (
     validate_vllm_basic,
 )
 from maas.phases import MaaSPhases
+from modelexpress.phases import ModelExpressPhases
 
 LLMISVC_CRD = "llminferenceservices.serving.kserve.io"
 _MANIFEST_DIR = Path(__file__).resolve().parent.parent / "deploy" / "manifests"
@@ -612,9 +615,10 @@ class CleanupPhase:
         _log("Cleanup complete")
 
 
-class TestConformance(CleanupPhase, MaaSPhases, LLMDPhases):
+class TestConformance(CleanupPhase, ModelExpressPhases, MaaSPhases, LLMDPhases):
     """Every phase for each test case.
 
     pytest collects inherited test methods in reverse-MRO order, so the phase
-    groups run llm-d (01–21), then MaaS (30a–30e), then cleanup (99).
+    groups run llm-d (01–21), then MaaS (30a–30e), then ModelExpress (40a–40f),
+    then cleanup (99).
     """

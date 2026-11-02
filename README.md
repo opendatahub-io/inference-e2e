@@ -255,6 +255,7 @@ docker run --rm ghcr.io/opendatahub-io/llm-d-e2e --setup 3.5-GA
 | kv-offloading-tiered | 1 | KV cache offloading to CPU + filesystem tiers |
 | pd-performance | 16 | P/D benchmark with GuideLLM (4 prefill + 2 decode, NIXL, RDMA) |
 | maas-single-gpu | 1 | single-gpu served through MaaS: auth, API key, token rate limit (needs the MaaS stack) |
+| modelexpress-p2p | 2 | ModelExpress native loading: P2P scale-out over RDMA, server TLS, token auth, NetworkPolicy |
 
 ## Test Phases
 
@@ -335,6 +336,25 @@ The benchmark adds three phases after the standard conformance checks:
 - **test_20** — GuideLLM benchmark (warmup + main run + threshold assertions)
 - **test_21** — Post-benchmark P/D metrics (validates NIXL transfers after load)
 
+## ModelExpress Tests
+
+`modelexpress-p2p` deploys a `ModelExpressServer` (TLS from the OpenShift service CA, token auth, tenant isolation, an allowlist naming the engine's ServiceAccount, and the restrictive NetworkPolicy profile) next to a one-replica LLMInferenceService in ModelExpress native mode. After the standard llm-d phases, the ModelExpress phases check:
+
+- the server is Ready and NetworkPolicyReady, at the address the engines use, and its NetworkPolicy admits gRPC only from the test namespace;
+- KServe reports `ModelExpressReady` and renders the engine for the server: `--load-format modelexpress`, server address, revision, projected token, CA bundle, and the SCC RoleBinding for `IPC_LOCK`;
+- scaling to a second replica loads its weights from the first over P2P (`rdma` strategy), publishes it as a source, and serves a completion;
+- only TLS clients that trust the CA bundle are answered, and plaintext is refused;
+- only the allowlisted engine ServiceAccount's token for the server's audience is accepted (no token or the API server audience → `UNAUTHENTICATED`, an unlisted ServiceAccount → `PERMISSION_DENIED`);
+- a pod in another namespace cannot reach the gRPC port.
+
+The gRPC probes run in the engine pod with its own `modelexpress` client. ModelExpress phases live in `tests/modelexpress/` and are deselected for test cases whose manifest declares no `ModelExpressServer`.
+
+```bash
+uv run llm-d-e2e -p configs/profiles/modelexpress-3.6.yaml --setup 3.6-GA --platform ocp --html reports/modelexpress-report.html -v
+```
+
+Prerequisites (ModelExpress): OpenShift with RHOAI 3.6 and DSC `kserve.modelExpress: Managed`, 2 GPUs with `rdma/rdma_shared_device_ib`, and `aipcc-pull-secret` in the test namespace for the engine image (the default vLLM preset image does not include the `modelexpress` client).
+
 ## MaaS Tests
 
 `maas-single-gpu` deploys `single-gpu` through Models-as-a-Service and, after the standard llm-d phases, checks the governed route: unauthenticated request → 401, API key creation → 201, authenticated inference → 200, subscription token rate limit → 429. Its manifest (`maas-single-gpu.yaml`) holds the LLMInferenceService bound to both `inference-gateway` and `maas-default-gateway` — the MaaS controller only governs routes on the MaaS gateway — plus its `MaaSModelRef`, `MaaSAuthPolicy`, and `MaaSSubscription`. MaaS phases live in `tests/maas/` and are deselected for test cases whose manifest declares no `MaaSModelRef`.
@@ -346,7 +366,7 @@ uv run llm-d-e2e -p configs/profiles/3.6.yaml      --setup 3.6-ea2 --platform ak
 uv run llm-d-e2e -p configs/profiles/maas-3.6.yaml --setup 3.6-ea2 --platform aks --html reports/maas-report.html --mock -v
 ```
 
-Prerequisites: the MaaS stack installed — RHCL (Kuadrant: Authorino, Limitador), the MaaS Postgres database and `maas-db-config` Secret, and the RHAII chart with `components.aigateway.modelsAsAService.enabled=true`, which creates both gateways. On xKS, `validation.maas.endpointScheme: http` is set because the MaaS gateway's port 443 is not reachable externally and its certificate only covers in-cluster names.
+Prerequisites (MaaS): the MaaS stack installed — RHCL (Kuadrant: Authorino, Limitador), the MaaS Postgres database and `maas-db-config` Secret, and the RHAII chart with `components.aigateway.modelsAsAService.enabled=true`, which creates both gateways. On xKS, `validation.maas.endpointScheme: http` is set because the MaaS gateway's port 443 is not reachable externally and its certificate only covers in-cluster names.
 
 Known issues:
 

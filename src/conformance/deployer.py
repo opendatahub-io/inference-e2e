@@ -45,6 +45,7 @@ from conformance.config import (
     load_manifest_documents,
 )
 from conformance.maas import patch_maas_refs
+from conformance.modelexpress import patch_modelexpress_refs
 
 log = logging.getLogger(__name__)
 
@@ -132,13 +133,13 @@ class Deployer:
         log.info("Using render image: %s", default)
         return default
 
-    def kubectl(self, *args: str, check: bool = True) -> str:
+    def kubectl(self, *args: str, check: bool = True, input: str | None = None) -> str:
         cmd = ["kubectl"]
         if self.kubeconfig:
             cmd += ["--kubeconfig", self.kubeconfig]
         cmd += list(args)
         log.debug("kubectl %s", " ".join(args))
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=300, input=input)
         if check and result.returncode != 0:
             raise RuntimeError(f"kubectl {' '.join(args)} failed: {result.stderr.strip()}")
         return result.stdout.strip()
@@ -1194,6 +1195,7 @@ class Deployer:
                             env_list.append(entry)
 
         patch_maas_refs(manifest_docs, primary_name, tc.name, self.namespace)
+        patch_modelexpress_refs(manifest_docs, primary_name, tc.name, self.namespace)
         return manifest_docs
 
     @staticmethod

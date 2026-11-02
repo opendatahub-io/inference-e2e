@@ -1,0 +1,33 @@
+(EngineCore pid=899) INFO 11-02 20:43:13 [loader.py:121] [Worker 0] MxModelLoader starting (model=/models/models--Qwen--Qwen3-0.6B/snapshots/c1899de289a04d12100db370d81485cdf75e47ca, p2p_enabled=True)
+2026-11-02 20:43:13,618 - INFO - [Worker 0] MxModelLoader starting (model=/models/models--Qwen--Qwen3-0.6B/snapshots/c1899de289a04d12100db370d81485cdf75e47ca, p2p_enabled=True)
+(EngineCore pid=899) INFO 11-02 20:43:13 [model_streamer_strategy.py:68] [Worker 0] MX_MODEL_URI not set, skipping model streamer
+2026-11-02 20:43:13,916 - INFO - [Worker 0] MX_MODEL_URI not set, skipping model streamer
+(EngineCore pid=899) INFO 11-02 20:43:13 [gds_strategy.py:35] [Worker 0] GDS not available, skipping
+2026-11-02 20:43:13,916 - INFO - [Worker 0] GDS not available, skipping
+(EngineCore pid=899) INFO 11-02 20:43:13 [__init__.py:113] Eligible loaders: ['rdma', 'server-cache', 'instant_tensor', 'default']
+2026-11-02 20:43:13,916 - INFO - Eligible loaders: ['rdma', 'server-cache', 'instant_tensor', 'default']
+(EngineCore pid=899) INFO 11-02 20:43:13 [__init__.py:122] [Worker 0] Trying strategy: rdma
+2026-11-02 20:43:13,916 - INFO - [Worker 0] Trying strategy: rdma
+(EngineCore pid=899) INFO 11-02 20:43:13 [rdma_strategy.py:154] [Worker 0] No RDMA source available, skipping
+2026-11-02 20:43:13,953 - INFO - [Worker 0] No RDMA source available, skipping
+(EngineCore pid=899) WARNING 11-02 20:43:13 [__init__.py:132] [Worker 0] Strategy rdma failed, trying next: No RDMA source available
+2026-11-02 20:43:13,953 - WARNING - [Worker 0] Strategy rdma failed, trying next: No RDMA source available
+(EngineCore pid=899) INFO 11-02 20:43:13 [__init__.py:122] [Worker 0] Trying strategy: server-cache
+2026-11-02 20:43:13,953 - INFO - [Worker 0] Trying strategy: server-cache
+(EngineCore pid=899) INFO 11-02 20:43:13 [server_cache_strategy.py:71] [Worker 0] Fetching Qwen/Qwen3-0.6B weights from ModelExpress Server into /models/models--Qwen--Qwen3-0.6B/snapshots/c1899de289a04d12100db370d81485cdf75e47ca
+2026-11-02 20:43:13,953 - INFO - [Worker 0] Fetching Qwen/Qwen3-0.6B weights from ModelExpress Server into /models/models--Qwen--Qwen3-0.6B/snapshots/c1899de289a04d12100db370d81485cdf75e47ca
+(EngineCore pid=899) INFO 11-02 20:43:21 [tensor_utils.py:372] [Worker 0] Registering tensors: 339 tensors (1.20 GB)
+2026-11-02 20:43:21,376 - INFO - [Worker 0] Registering tensors: 339 tensors (1.20 GB)
+(EngineCore pid=899) INFO 11-02 20:43:23 [publish.py:79] [Worker 0] Preparing 339 tensors for model '/models/models--Qwen--Qwen3-0.6B/snapshots/c1899de289a04d12100db370d81485cdf75e47ca'
+2026-11-02 20:43:23,304 - INFO - [Worker 0] Preparing 339 tensors for model '/models/models--Qwen--Qwen3-0.6B/snapshots/c1899de289a04d12100db370d81485cdf75e47ca'
+(EngineCore pid=899) INFO 11-02 20:43:23 [publisher.py:148] [Worker 0] Publisher thread started (interval=30s, publish_timeout=1800s)
+2026-11-02 20:43:23,337 - INFO - [Worker 0] Publisher thread started (interval=30s, publish_timeout=1800s)
+(EngineCore pid=899) INFO 11-02 20:43:23 [loader.py:172] [Worker 0] MxModelLoader.load_model() COMPLETE in 9.72s
+2026-11-02 20:43:23,337 - INFO - [Worker 0] MxModelLoader.load_model() COMPLETE in 9.72s
+(EngineCore pid=899) INFO 11-02 20:43:23 [publish.py:135] [Worker 0] Published P2P metadata to MX server (mx_source_id=1d44911e66a0fb56, worker_grpc=10.128.3.133:6555)
+(EngineCore pid=899) INFO 11-02 20:43:23 [publisher.py:349] [Worker 0] Source published successfully (mx_source_id=1d44911e66a0fb56)
+2026-11-02 20:43:23,863 - INFO - [Worker 0] Published P2P metadata to MX server (mx_source_id=1d44911e66a0fb56, worker_grpc=10.128.3.133:6555)
+2026-11-02 20:43:23,863 - INFO - [Worker 0] Source published successfully (mx_source_id=1d44911e66a0fb56)
+(EngineCore pid=899) INFO 11-02 20:43:24 [model_runner.py:407] Model loading took 1.12 GiB memory and 11.199680 seconds
+(EngineCore pid=899) INFO 11-02 20:43:24 [publisher.py:404] [Worker 0] Status -> READY
+2026-11-02 20:43:24,351 - INFO - [Worker 0] Status -> READY

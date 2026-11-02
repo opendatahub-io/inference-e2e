@@ -62,7 +62,7 @@ The `--mode` flag controls which phases execute:
 
 ### Ordered conformance phases
 
-`test_conformance.py:TestConformance` composes three phase groups: `LLMDPhases` (01–21, in `test_conformance.py`), `MaaSPhases` (30a–30e, in `tests/maas/phases.py`), and `CleanupPhase` (99). pytest collects inherited test methods in reverse-MRO order, so `class TestConformance(CleanupPhase, MaaSPhases, LLMDPhases)` runs the groups in that order for each test case; within a group, methods run in definition order:
+`test_conformance.py:TestConformance` composes four phase groups: `LLMDPhases` (01–21, in `test_conformance.py`), `MaaSPhases` (30a–30e, in `tests/maas/phases.py`), `ModelExpressPhases` (40a–40f, in `tests/modelexpress/phases.py`), and `CleanupPhase` (99). pytest collects inherited test methods in reverse-MRO order, so `class TestConformance(CleanupPhase, ModelExpressPhases, MaaSPhases, LLMDPhases)` runs the groups in that order for each test case; within a group, methods run in definition order:
 
 | Phase | Method | What it validates |
 |-------|--------|-------------------|
@@ -90,6 +90,12 @@ The `--mode` flag controls which phases execute:
 | 30c | `test_30c_maas_api_key` | API key creation with a K8s user token → 201 |
 | 30d | `test_30d_maas_inference` | Authenticated MaaS inference → 200 |
 | 30e | `test_30e_maas_rate_limit` | Subscription token rate limit → 429 after quota |
+| 40a | `test_40a_modelexpress_server_ready` | ModelExpressServer Ready + NetworkPolicyReady at the engines' address; NetworkPolicy matches `spec.networkPolicy` |
+| 40b | `test_40b_modelexpress_engine_wiring` | `ModelExpressReady`; engine load format, address, revision, projected token, CA bundle, SCC RoleBinding |
+| 40c | `test_40c_modelexpress_p2p_scale_out` | Scale +1: new replica loads over P2P (`rdma`), publishes a source, serves a completion |
+| 40d | `test_40d_modelexpress_tls` | CA-trusting client answered; no CA bundle and plaintext refused |
+| 40e | `test_40e_modelexpress_auth` | Engine token accepted; no token / API server audience → UNAUTHENTICATED; unlisted SA → PERMISSION_DENIED |
+| 40f | `test_40f_modelexpress_network_policy` | Engine pod reaches gRPC; a pod in another namespace is blocked |
 | 99 | `test_99_cleanup` | Delete the manifest's resources (companion documents, then LLMInferenceServices) |
 
 Phases a test case's config turns off are deselected at collection, not skipped: each such phase carries `@pytest.mark.applies_when.with_args(predicate)`, and `conftest.py:pytest_collection_modifyitems` drops items whose `predicate(tc)` is false (the summary reports them as `deselected`). Use `.with_args(...)` — a mark called with a lone callable treats it as the decorated function. Runtime conditions (missing manifest, failed deploy, too few GPUs, `--nocleanup`, `--mode discover`) still `pytest.skip()` and show as SKIPPED.
@@ -99,6 +105,12 @@ Phases a test case's config turns off are deselected at collection, not skipped:
 A MaaS testcase is a testcase config plus a same-named manifest (e.g. `maas-single-gpu.yaml`) holding the LLMInferenceService (bound to `inference-gateway` and `maas-default-gateway`) and its `MaaSModelRef`, `MaaSAuthPolicy`, and `MaaSSubscription`. The llm-d phases validate the model as usual; the MaaS phases are deselected unless the manifest declares a `MaaSModelRef`. MaaS code is owned separately: `tests/maas/` (phases, unit tests) and `src/conformance/maas.py` (client, readiness, manifest ref patching).
 
 Deploy applies documents that declare another namespace (MaaS policies live in `models-as-a-service`) in a separate `kubectl apply -n <namespace>`; manifests with no declared namespaces still apply in one call. `maas.patch_maas_refs()` points the `MaaSModelRef` at the renamed primary service and the policy/subscription `modelRefs` at the test namespace. Cleanup deletes non-LLMInferenceService documents in reverse manifest order before the services. `validation.maas.endpointScheme` overrides the MaaSModelRef endpoint scheme (`http` on AKS, where the gateway's port 443 is blocked).
+
+### ModelExpress testcases
+
+A ModelExpress testcase is a testcase config plus a same-named manifest (e.g. `modelexpress-p2p.yaml`) holding a `ModelExpressServer` and an LLMInferenceService configured by the `serving.kserve.io/exp-modelexpress-*` annotations. The ModelExpress phases are deselected unless the manifest declares a `ModelExpressServer`. Code: `tests/modelexpress/` (phases, unit tests on objects captured from a live run in `fixtures/`) and `src/conformance/modelexpress.py` (manifest ref patching, readiness, rendering and NetworkPolicy checks, load-strategy log parsing, probes).
+
+`modelexpress.patch_modelexpress_refs()` moves the address annotation's `<server>.<namespace>.svc` host and the server allowlist to the test namespace, and renames the allowlisted `<service>-kserve` engine ServiceAccount with the primary service. gRPC probes run `src/conformance/modelexpress_probe.py` in the engine pod (`kubectl exec -i ... python3 -c`, request JSON on stdin) because the shipped server image holds only the server binary; `Deployer.kubectl()` takes `input=` for this. The NetworkPolicy check runs a pod with the server image in a namespace of its own (`<namespace>-mx-outsider`, deleted afterwards). Phase 40c scales the service and is skipped in `--mode discover`.
 
 ### Skip propagation
 

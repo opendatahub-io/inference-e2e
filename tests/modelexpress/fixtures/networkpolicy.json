@@ -1,0 +1,74 @@
+{
+  "apiVersion": "networking.k8s.io/v1",
+  "kind": "NetworkPolicy",
+  "metadata": {
+    "name": "modelexpress",
+    "namespace": "llm-conformance-test",
+    "ownerReferences": [
+      {
+        "apiVersion": "modelexpress.opendatahub.io/v1alpha1",
+        "kind": "ModelExpressServer",
+        "name": "modelexpress"
+      }
+    ]
+  },
+  "spec": {
+    "egress": [
+      {}
+    ],
+    "ingress": [
+      {
+        "from": [
+          {
+            "podSelector": {}
+          }
+        ],
+        "ports": [
+          {
+            "port": 8001,
+            "protocol": "TCP"
+          },
+          {
+            "port": 15008,
+            "protocol": "TCP"
+          }
+        ]
+      },
+      {
+        "from": [
+          {
+            "namespaceSelector": {
+              "matchExpressions": [
+                {
+                  "key": "kubernetes.io/metadata.name",
+                  "operator": "In",
+                  "values": [
+                    "openshift-monitoring",
+                    "openshift-user-workload-monitoring",
+                    "redhat-ods-monitoring"
+                  ]
+                }
+              ]
+            }
+          }
+        ],
+        "ports": [
+          {
+            "port": 9401,
+            "protocol": "TCP"
+          }
+        ]
+      }
+    ],
+    "podSelector": {
+      "matchLabels": {
+        "app.kubernetes.io/instance": "modelexpress",
+        "app.kubernetes.io/name": "modelexpress-server"
+      }
+    },
+    "policyTypes": [
+      "Ingress",
+      "Egress"
+    ]
+  }
+}

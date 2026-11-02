@@ -62,6 +62,7 @@ Enable only what the topology proves:
 | `moe` | MoE with DP/EP |
 | `multi-pool` | Multiple InferencePools |
 | `maas-single-gpu` | single-gpu through MaaS (auth, API key, rate limit); `validation.maas.endpointScheme` |
+| `modelexpress-p2p` | ModelExpress native loading: P2P scale-out, server TLS, token auth, NetworkPolicy |
 
 Exact descriptions are in each file’s `description` field.
 
