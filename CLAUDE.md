@@ -225,6 +225,7 @@ Use `scripts/new-testcase.sh <name>` to generate stubs, then customize:
 ## Key Design Decisions
 
 - All cluster interaction goes through `kubectl` subprocess calls (no Python K8s client library).
+- Patched manifests are applied as a JSON `v1 List`, not re-dumped YAML: kubectl parses YAML 1.1, where an unquoted `y`, `n` or `off` from PyYAML is a boolean, and an EnvVar value must be a string.
 - Test cases are data-driven via YAML configs, not hardcoded in test files.
 - The `--mock` flag swaps the vLLM container with llm-d-inference-sim, injects simulator args, and strips GPU resource requests, enabling full e2e flow without GPUs.
 - camelCase in YAML, snake_case in Python — `_snake()` and `_build()` in `config.py` bridge the two.

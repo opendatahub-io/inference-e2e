@@ -453,13 +453,13 @@ spec: {}
 
 def _record_applies(deployer, monkeypatch) -> list[tuple[str, list[dict]]]:
     """Stub cluster calls; record each ``kubectl apply`` as (namespace, documents)."""
-    import yaml
+    import json
 
     applies = []
 
     def fake_kubectl(*args, **kwargs):
         if args[0] == "apply":
-            applies.append((args[2], list(yaml.safe_load_all(Path(args[4]).read_text()))))
+            applies.append((args[2], json.loads(Path(args[4]).read_text())["items"]))
         return ""
 
     monkeypatch.setattr(deployer, "kubectl", fake_kubectl)
@@ -489,6 +489,29 @@ def test_single_namespace_manifest_is_one_apply_into_test_namespace(tmp_path, mo
     assert [(ns, [doc["metadata"]["name"] for doc in docs]) for ns, docs in applies] == [
         ("llm-conformance-test", ["case", "b"])
     ]
+
+
+def test_applied_env_values_stay_strings(tmp_path, monkeypatch):
+    """kubectl reads YAML 1.1, where a bare y, n or off is a boolean and an EnvVar value must be a string."""
+    from conformance.deployer import Deployer
+
+    (tmp_path / "env.yaml").write_text(
+        "apiVersion: serving.kserve.io/v1alpha2\nkind: LLMInferenceService\nmetadata:\n  name: a\n"
+        "spec:\n  template:\n    containers:\n    - name: main\n      env:\n"
+        '      - name: UCX_PROTO_INFO\n        value: "y"\n'
+        '      - name: FLAG_N\n        value: "n"\n'
+        '      - name: FLAG_OFF\n        value: "off"\n'
+    )
+    tc = load_testcase("configs/testcases/lora-single.yaml")
+    tc.deployment.manifest_path = "env.yaml"
+    deployer = Deployer(manifest_dir=str(tmp_path), namespace="llm-conformance-test")
+    applies = _record_applies(deployer, monkeypatch)
+
+    assert deployer.deploy(tc).success
+
+    [(_, [service])] = applies
+    env = service["spec"]["template"]["containers"][0]["env"]
+    assert {e["name"]: e["value"] for e in env} == {"UCX_PROTO_INFO": "y", "FLAG_N": "n", "FLAG_OFF": "off"}
 
 
 _MAAS_MANIFEST = """apiVersion: serving.kserve.io/v1alpha2

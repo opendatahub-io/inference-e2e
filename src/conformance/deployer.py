@@ -36,8 +36,6 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from uuid import uuid4
 
-import yaml
-
 from conformance.config import (
     TestCase,
     apply_manifest_model_config,
@@ -636,8 +634,8 @@ class Deployer:
             # `kubectl apply -n` rejects documents that declare another namespace
             # (e.g. MaaS policies), so each declared namespace is applied separately.
             for namespace, docs in self._documents_by_namespace(manifest_docs).items():
-                with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml") as f:
-                    yaml.dump_all(docs, f)
+                with tempfile.NamedTemporaryFile(mode="w", suffix=".json") as f:
+                    json.dump({"apiVersion": "v1", "kind": "List", "items": docs}, f)
                     f.flush()
                     self._apply_with_webhook_retry(f.name, namespace=namespace)
             for name in service_names:
