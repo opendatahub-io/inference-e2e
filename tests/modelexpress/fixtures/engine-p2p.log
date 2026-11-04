@@ -1,0 +1,43 @@
+(EngineCore pid=898) INFO 11-02 20:49:00 [loader.py:121] [Worker 0] MxModelLoader starting (model=/models/models--Qwen--Qwen3-0.6B/snapshots/c1899de289a04d12100db370d81485cdf75e47ca, p2p_enabled=True)
+2026-11-02 20:49:00,791 - INFO - [Worker 0] MxModelLoader starting (model=/models/models--Qwen--Qwen3-0.6B/snapshots/c1899de289a04d12100db370d81485cdf75e47ca, p2p_enabled=True)
+(EngineCore pid=898) INFO 11-02 20:49:01 [model_streamer_strategy.py:68] [Worker 0] MX_MODEL_URI not set, skipping model streamer
+2026-11-02 20:49:01,094 - INFO - [Worker 0] MX_MODEL_URI not set, skipping model streamer
+(EngineCore pid=898) INFO 11-02 20:49:01 [gds_strategy.py:35] [Worker 0] GDS not available, skipping
+2026-11-02 20:49:01,095 - INFO - [Worker 0] GDS not available, skipping
+(EngineCore pid=898) INFO 11-02 20:49:01 [__init__.py:113] Eligible loaders: ['rdma', 'server-cache', 'instant_tensor', 'default']
+2026-11-02 20:49:01,095 - INFO - Eligible loaders: ['rdma', 'server-cache', 'instant_tensor', 'default']
+(EngineCore pid=898) INFO 11-02 20:49:01 [__init__.py:122] [Worker 0] Trying strategy: rdma
+2026-11-02 20:49:01,095 - INFO - [Worker 0] Trying strategy: rdma
+(EngineCore pid=898) INFO 11-02 20:49:01 [rdma_strategy.py:353] [Worker 0] Source selection: source_selector=random source_candidates_total=1 source_candidates_rank_matched=1 source_candidates_accelerator_matched=1
+2026-11-02 20:49:01,141 - INFO - [Worker 0] Source selection: source_selector=random source_candidates_total=1 source_candidates_rank_matched=1 source_candidates_accelerator_matched=1
+(EngineCore pid=898) INFO 11-02 20:49:01 [rdma_strategy.py:164] [Worker 0] Source attempt: source_attempt_index=0 source_worker_id=b9a9b366 mx_source_id=1d44911e66a0fb56
+2026-11-02 20:49:01,141 - INFO - [Worker 0] Source attempt: source_attempt_index=0 source_worker_id=b9a9b366 mx_source_id=1d44911e66a0fb56
+(EngineCore pid=898) INFO 11-02 20:49:01 [rdma_strategy.py:470] [Worker 0] [TIMING] P2P tensor manifest: 0.011s (339 tensors, 23920 bytes)
+2026-11-02 20:49:01,159 - INFO - [Worker 0] [TIMING] P2P tensor manifest: 0.011s (339 tensors, 23920 bytes)
+(EngineCore pid=898) INFO 11-02 20:49:01 [rdma_strategy.py:443] [Worker 0] [TIMING] GetMetadata (P2P (lightweight)): 0.018s, 339 tensors
+2026-11-02 20:49:01,159 - INFO - [Worker 0] [TIMING] GetMetadata (P2P (lightweight)): 0.018s, 339 tensors
+(EngineCore pid=898) INFO 11-02 20:49:01 [rdma_strategy.py:193] [Worker 0] Trying source worker b9a9b366 (339 tensors)
+2026-11-02 20:49:01,159 - INFO - [Worker 0] Trying source worker b9a9b366 (339 tensors)
+(EngineCore pid=898) INFO 11-02 20:49:01 [tensor_utils.py:372] [Worker 0] Registering tensors: 339 tensors (1.20 GB)
+2026-11-02 20:49:01,219 - INFO - [Worker 0] Registering tensors: 339 tensors (1.20 GB)
+(EngineCore pid=898) INFO 11-02 20:49:03 [rdma_strategy.py:606] [Worker 0] [TIMING] P2P NIXL metadata fetch: 0.111s
+2026-11-02 20:49:03,345 - INFO - [Worker 0] [TIMING] P2P NIXL metadata fetch: 0.111s
+(EngineCore pid=898) INFO 11-02 20:49:03 [rdma_strategy.py:635] [Worker 0] Receiving 339 tensors from source (P2P)
+2026-11-02 20:49:03,345 - INFO - [Worker 0] Receiving 339 tensors from source (P2P)
+(EngineCore pid=898) INFO 11-02 20:49:03 [rdma_strategy.py:680] [Worker 0] [TIMING] RDMA transfer complete: 339 tensors, 1.20 GB, 0.068s, 142.4 Gbps
+2026-11-02 20:49:03,413 - INFO - [Worker 0] [TIMING] RDMA transfer complete: 339 tensors, 1.20 GB, 0.068s, 142.4 Gbps
+(EngineCore pid=898) INFO 11-02 20:49:03 [rdma_strategy.py:702] [Worker 0] [TIMING] Total receive time: 2.23s
+2026-11-02 20:49:03,413 - INFO - [Worker 0] [TIMING] Total receive time: 2.23s
+(EngineCore pid=898) INFO 11-02 20:49:03 [publish.py:79] [Worker 0] Preparing 339 tensors for model '/models/models--Qwen--Qwen3-0.6B/snapshots/c1899de289a04d12100db370d81485cdf75e47ca'
+2026-11-02 20:49:03,453 - INFO - [Worker 0] Preparing 339 tensors for model '/models/models--Qwen--Qwen3-0.6B/snapshots/c1899de289a04d12100db370d81485cdf75e47ca'
+(EngineCore pid=898) INFO 11-02 20:49:03 [publisher.py:148] [Worker 0] Publisher thread started (interval=30s, publish_timeout=1800s)
+2026-11-02 20:49:03,487 - INFO - [Worker 0] Publisher thread started (interval=30s, publish_timeout=1800s)
+(EngineCore pid=898) INFO 11-02 20:49:03 [loader.py:172] [Worker 0] MxModelLoader.load_model() COMPLETE in 2.70s
+2026-11-02 20:49:03,487 - INFO - [Worker 0] MxModelLoader.load_model() COMPLETE in 2.70s
+(EngineCore pid=898) INFO 11-02 20:49:03 [publish.py:135] [Worker 0] Published P2P metadata to MX server (mx_source_id=1d44911e66a0fb56, worker_grpc=10.130.2.253:6555)
+(EngineCore pid=898) INFO 11-02 20:49:03 [publisher.py:349] [Worker 0] Source published successfully (mx_source_id=1d44911e66a0fb56)
+2026-11-02 20:49:03,933 - INFO - [Worker 0] Published P2P metadata to MX server (mx_source_id=1d44911e66a0fb56, worker_grpc=10.130.2.253:6555)
+2026-11-02 20:49:03,933 - INFO - [Worker 0] Source published successfully (mx_source_id=1d44911e66a0fb56)
+(EngineCore pid=898) INFO 11-02 20:49:04 [model_runner.py:407] Model loading took 1.12 GiB memory and 3.994879 seconds
+(EngineCore pid=898) INFO 11-02 20:49:04 [publisher.py:404] [Worker 0] Status -> READY
+2026-11-02 20:49:04,378 - INFO - [Worker 0] Status -> READY

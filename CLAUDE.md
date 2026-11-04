@@ -51,7 +51,7 @@ Makefile targets mirror CLI: `make test TESTCASE=single-gpu`, `make unittest`, `
 
 ### Test case parametrization
 
-`conftest.py:pytest_generate_tests()` resolves which test cases to run (from `--testcase` names or `--profile` YAML) and parametrizes the `tc` fixture. Each `tc` is a `TestCase` dataclass loaded from `configs/testcases/*.yaml`. `TestConformance` methods run once per test case.
+`conftest.py:pytest_generate_tests()` resolves which test cases to run (from `--testcase` names or `--profile` YAML; with neither, every case except those with `optIn: true`) and parametrizes the `tc` fixture. Each `tc` is a `TestCase` dataclass loaded from `configs/testcases/*.yaml`. `TestConformance` methods run once per test case.
 
 ### Run modes
 
@@ -62,7 +62,7 @@ The `--mode` flag controls which phases execute:
 
 ### Ordered conformance phases
 
-`test_conformance.py:TestConformance` composes three phase groups: `LLMDPhases` (01–21, in `test_conformance.py`), `MaaSPhases` (30a–30e, in `tests/maas/phases.py`), and `CleanupPhase` (99). pytest collects inherited test methods in reverse-MRO order, so `class TestConformance(CleanupPhase, MaaSPhases, LLMDPhases)` runs the groups in that order for each test case; within a group, methods run in definition order:
+`test_conformance.py:TestConformance` composes four phase groups: `LLMDPhases` (01–21, in `test_conformance.py`), `MaaSPhases` (30a–30e, in `tests/maas/phases.py`), `ModelExpressPhases` (40a–40f, in `tests/modelexpress/phases.py`), and `CleanupPhase` (99). pytest collects inherited test methods in reverse-MRO order, so `class TestConformance(CleanupPhase, ModelExpressPhases, MaaSPhases, LLMDPhases)` runs the groups in that order for each test case; within a group, methods run in definition order:
 
 | Phase | Method | What it validates |
 |-------|--------|-------------------|
@@ -90,6 +90,12 @@ The `--mode` flag controls which phases execute:
 | 30c | `test_30c_maas_api_key` | API key creation with a K8s user token → 201 |
 | 30d | `test_30d_maas_inference` | Authenticated MaaS inference → 200 |
 | 30e | `test_30e_maas_rate_limit` | Subscription token rate limit → 429 after quota |
+| 40a | `test_40a_modelexpress_server_ready` | ModelExpressServer Ready + NetworkPolicyReady at the engines' address; NetworkPolicy matches `spec.networkPolicy` |
+| 40b | `test_40b_modelexpress_engine_wiring` | `ModelExpressReady`; engine load format, address, revision, projected token, CA bundle, SCC RoleBinding |
+| 40c | `test_40c_modelexpress_p2p_scale_out` | Scale +1: new replica loads over P2P (`rdma`), publishes a source, serves a completion |
+| 40d | `test_40d_modelexpress_tls` | CA-trusting client answered; no CA bundle and plaintext refused |
+| 40e | `test_40e_modelexpress_auth` | Engine token accepted; no token / API server audience → UNAUTHENTICATED; unlisted SA → PERMISSION_DENIED |
+| 40f | `test_40f_modelexpress_network_policy` | Engine pod reaches gRPC; a pod in another namespace is blocked |
 | 99 | `test_99_cleanup` | Delete the manifest's resources (companion documents, then LLMInferenceServices) |
 
 Phases a test case's config turns off are deselected at collection, not skipped: each such phase carries `@pytest.mark.applies_when.with_args(predicate)`, and `conftest.py:pytest_collection_modifyitems` drops items whose `predicate(tc)` is false (the summary reports them as `deselected`). Use `.with_args(...)` — a mark called with a lone callable treats it as the decorated function. Runtime conditions (missing manifest, failed deploy, too few GPUs, `--nocleanup`, `--mode discover`) still `pytest.skip()` and show as SKIPPED.
@@ -99,6 +105,22 @@ Phases a test case's config turns off are deselected at collection, not skipped:
 A MaaS testcase is a testcase config plus a same-named manifest (e.g. `maas-single-gpu.yaml`) holding the LLMInferenceService (bound to `inference-gateway` and `maas-default-gateway`) and its `MaaSModelRef`, `MaaSAuthPolicy`, and `MaaSSubscription`. The llm-d phases validate the model as usual; the MaaS phases are deselected unless the manifest declares a `MaaSModelRef`. MaaS code is owned separately: `tests/maas/` (phases, unit tests) and `src/conformance/maas.py` (client, readiness, manifest ref patching).
 
 Deploy applies documents that declare another namespace (MaaS policies live in `models-as-a-service`) in a separate `kubectl apply -n <namespace>`; manifests with no declared namespaces still apply in one call. `maas.patch_maas_refs()` points the `MaaSModelRef` at the renamed primary service and the policy/subscription `modelRefs` at the test namespace. Cleanup deletes non-LLMInferenceService documents in reverse manifest order before the services. `validation.maas.endpointScheme` overrides the MaaSModelRef endpoint scheme (`http` on AKS, where the gateway's port 443 is blocked).
+
+### ModelExpress testcases
+
+A ModelExpress testcase is a testcase config plus a same-named manifest (e.g. `modelexpress-p2p.yaml`) holding a `ModelExpressServer` and an LLMInferenceService configured by the `serving.kserve.io/exp-modelexpress-*` annotations. The ModelExpress phases are deselected unless the manifest declares a `ModelExpressServer`. Code: `tests/modelexpress/` (phases, unit tests on objects captured from a live run in `fixtures/`) and `src/conformance/modelexpress.py` (manifest ref patching, readiness, rendering and NetworkPolicy checks, load-strategy log parsing, probes).
+
+`modelexpress.patch_modelexpress_refs()` moves the address annotation's `<server>.<namespace>.svc` host and the server allowlist to the test namespace, and renames the allowlisted `<service>-kserve` engine ServiceAccount with the primary service. gRPC probes run `src/conformance/modelexpress_probe.py` in the engine pod (`kubectl exec -i ... python3 -c`, request JSON on stdin) because the shipped server image holds only the server binary; `Deployer.kubectl()` takes `input=` for this. The NetworkPolicy check runs a pod with the server image in a namespace of its own (`<namespace>-mx-outsider`, deleted afterwards). Phase 40c scales the service and is skipped in `--mode discover`; it logs the new replica's P2P transfer summary (`p2p_transfers()`), and when `Deployer.runs_without_rdma(tc)` (`--no-rdma`, or the testcase declares `resources.rdma: false`) asserts that the UCX protocol tables (`ucx_transports()`) select `tcp` and nothing outside `TCP_UCX_ENV["UCX_TLS"]`.
+
+`modelexpress-p2p` targets OpenShift with RDMA (service-CA TLS, restrictive NetworkPolicy, AIPCC engine image). `modelexpress-p2p-xks` targets RHAII on xKS without RDMA and is in the `3.6` profile run by the RHAII AKS GPU nightly: its manifest uses a plaintext server (xKS has no service CA), the compatibility NetworkPolicy (AKS nightly clusters do not enforce NetworkPolicy), the RHAII preset vLLM image, and sets `TCP_UCX_ENV` itself, so 40d and 40f skip.
+
+### RDMA
+
+Manifests request RDMA as `rdma/*` extended resources. `--rdma-resource <name>` renames those requests to the cluster's device-plugin resource. `--no-rdma` (mutually exclusive with it) runs without RDMA: `Deployer._run_without_rdma()` drops each requesting container's `rdma/*` devices, `IPC_LOCK`, and `UCX_*`/`MX_RDMA_*` env, then sets `TCP_UCX_ENV` (`UCX_TLS=tcp,cuda_copy`, `UCX_PROTO_INFO=y`). Bare `UCX_TLS=tcp` does not work for ModelExpress: its client deletes that exact value so NIXL can auto-detect RDMA. Containers that request no `rdma/*` device are left alone.
+
+### Kueue
+
+`--queue-name <localqueue>` labels every LLMInferenceService with `kueue.x-k8s.io/queue-name`. KServe copies the label to the engine Deployment and pod template (not to the scheduler), so Kueue admits each engine pod against that LocalQueue; deploy fails fast if the LocalQueue does not exist in the test namespace. The namespace must match Kueue's managed-namespace selector (`kueue.openshift.io/managed=true` on OpenShift), and the ClusterQueue must cover every resource the pods request, including `rdma/*`, or Kueue leaves them gated.
 
 ### Skip propagation
 
@@ -143,7 +165,7 @@ The gateway service name and namespace are RHOAI-specific hardcoded values in `d
 ### Source modules (`src/conformance/`)
 
 - **config.py** — Dataclass config types and YAML loaders. YAML keys are camelCase, Python fields are snake_case; `_build()` handles recursive conversion.
-- **deployer.py** — `Deployer`: manages LLMInferenceService lifecycle via `kubectl` subprocess calls. Handles deploy, wait-for-ready, port-forwarding, manifest patching (mock image, pull secrets, auth disable, LoRA spec injection, node selectors, env overrides), EPP metrics RBAC, pull secret propagation, namespace labeling for gateway access, and cleanup.
+- **deployer.py** — `Deployer`: manages LLMInferenceService lifecycle via `kubectl` subprocess calls. Handles deploy, wait-for-ready, port-forwarding, manifest patching (mock image, pull secrets, auth disable, LoRA spec injection, node selectors, env overrides, `--rdma-resource` renaming of `rdma/*` requests, `--no-rdma` TCP rewrite, `--queue-name` Kueue label), EPP metrics RBAC, pull secret propagation, namespace labeling for gateway access, and cleanup.
 - **client.py** — `LLMClient`: HTTP client (httpx) for `/health`, `/v1/models`, `/v1/completions`, `/v1/chat/completions`, `/v1/messages`, `/v1/responses`.
 - **metrics.py** — `Scraper`: scrapes Prometheus metrics from pods via `kubectl exec` (python3/wget), falling back to port-forward + httpx for minimal containers. Per-topology validators: `validate_vllm_basic`, `validate_cache_aware`, `validate_pd`, `validate_scheduler`, `validate_flow_control`, `validate_lora`. `parse_prometheus()` parses text exposition format.
 - **model.py** — `ModelDownloader`: creates PVCs and download Jobs for pre-caching models from HuggingFace.
@@ -209,6 +231,7 @@ Use `scripts/new-testcase.sh <name>` to generate stubs, then customize:
 ## Key Design Decisions
 
 - All cluster interaction goes through `kubectl` subprocess calls (no Python K8s client library).
+- Patched manifests are applied as a JSON `v1 List`, not re-dumped YAML: kubectl parses YAML 1.1, where an unquoted `y`, `n` or `off` from PyYAML is a boolean, and an EnvVar value must be a string.
 - Test cases are data-driven via YAML configs, not hardcoded in test files.
 - The `--mock` flag swaps the vLLM container with llm-d-inference-sim, injects simulator args, and strips GPU resource requests, enabling full e2e flow without GPUs.
 - camelCase in YAML, snake_case in Python — `_snake()` and `_build()` in `config.py` bridge the two.

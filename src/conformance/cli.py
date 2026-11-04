@@ -3,7 +3,7 @@
 ``main()`` parses argparse options, handles utility commands, then builds a
 pytest argv for ``tests/test_conformance.py``. Every value flag in
 ``flag_map`` must have a matching ``pytest_addoption`` in ``conftest.py``;
-boolean flags (``--disable-auth``, ``--nocleanup``) are appended separately.
+boolean flags (``--disable-auth``, ``--nocleanup``, ``--no-rdma``) are appended separately.
 
 Utility commands (may exit before pytest):
   - ``--list-testcases`` / ``--list-profiles`` — print configs + manifest ref
@@ -77,6 +77,20 @@ def main():
     # Node placement
     parser.add_argument("--decode-node-selector", default="", help="Node selector for decode pods (key=value)")
     parser.add_argument("--prefill-node-selector", default="", help="Node selector for prefill pods (key=value)")
+    rdma = parser.add_mutually_exclusive_group()
+    rdma.add_argument(
+        "--rdma-resource",
+        default="",
+        help="Extended resource requested in place of the manifest's rdma/* devices (e.g. rdma/roce_gdr)",
+    )
+    rdma.add_argument(
+        "--no-rdma",
+        action="store_true",
+        help="Drop the manifest's rdma/* devices and IPC_LOCK and run UCX over TCP (clusters without RDMA)",
+    )
+    parser.add_argument(
+        "--queue-name", default="", help="Kueue LocalQueue in the test namespace that admits the engine pods"
+    )
 
     # Behavior
     parser.add_argument("--nocleanup", action="store_true", help="Keep resources after test")
@@ -152,6 +166,8 @@ def main():
         "guidellm_image": "--guidellm-image",
         "decode_node_selector": "--decode-node-selector",
         "prefill_node_selector": "--prefill-node-selector",
+        "rdma_resource": "--rdma-resource",
+        "queue_name": "--queue-name",
     }
 
     for attr, flag in flag_map.items():
@@ -163,6 +179,8 @@ def main():
         pytest_args.append("--disable-auth")
     if args.nocleanup:
         pytest_args.append("--nocleanup")
+    if args.no_rdma:
+        pytest_args.append("--no-rdma")
     if args.verbose:
         pytest_args.append("-v")
     if args.fail_fast:

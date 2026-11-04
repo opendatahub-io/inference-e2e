@@ -12,12 +12,15 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 from conformance.config import (
     chat_prompt_to_messages,
+    default_testcases,
+    filter_by_names,
     iter_config_yamls,
     load_profile,
     load_profiles_from_dir,
     load_testcase,
     load_testcases_from_dir,
     parse_duration,
+    resolve_profile,
 )
 from conformance.metrics import ScrapeResult, parse_prometheus, validate_flow_control, validate_scheduler
 
@@ -49,6 +52,27 @@ def test_load_all_testcases():
     assert len(cases) >= 1
     names = [tc.name for tc in cases]
     assert "single-gpu-smoke" in names
+
+
+def test_a_run_naming_no_testcase_leaves_out_opt_in_cases():
+    cases = load_testcases_from_dir("configs/testcases")
+
+    selected = [tc.name for tc in default_testcases(cases)]
+
+    assert load_testcase("configs/testcases/modelexpress-p2p.yaml").opt_in
+    assert "modelexpress-p2p" not in selected
+    assert "single-gpu-smoke" in selected
+    assert [tc.name for tc in filter_by_names(cases, ["modelexpress-p2p"])] == ["modelexpress-p2p"]
+
+
+def test_36_profile_runs_the_xks_modelexpress_case_without_rdma():
+    cases = {tc.name: tc for tc in resolve_profile(load_profile("configs/profiles/3.6.yaml"), "configs/testcases")}
+
+    xks = cases["modelexpress-p2p-xks"]
+    assert "modelexpress-p2p" not in cases
+    assert xks.opt_in and xks.deployment.requires_gpu
+    assert not xks.deployment.resources.rdma
+    assert xks.deployment.manifest_path == "modelexpress-p2p-xks.yaml"
 
 
 def test_dir_loaders_skip_readme(tmp_path):

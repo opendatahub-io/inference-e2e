@@ -1,0 +1,38 @@
+(EngineCore pid=898) INFO 11-04 17:05:03 [__init__.py:122] [Worker 0] Trying strategy: rdma
+2026-11-04 17:05:03,040 - INFO - [Worker 0] Trying strategy: rdma
+[1793811917.238848] [modelexpress-p2p-tcp-kserve-69c4b7ffcc-cjznc:898  :0]   +-------------------------------------+-------------------------------------------------------------+
+[1793811917.238856] [modelexpress-p2p-tcp-kserve-69c4b7ffcc-cjznc:898  :0]   | mx-auto-worker0-d68e0267 self cfg#0 | remote memory write by ucp_put* from host memory to host    |
+[1793811917.238859] [modelexpress-p2p-tcp-kserve-69c4b7ffcc-cjznc:898  :0]   +-------------------------------------+--------------------------------------------+----------------+
+[1793811917.238861] [modelexpress-p2p-tcp-kserve-69c4b7ffcc-cjznc:898  :0]   |                       0..4294967295 | short                                      | cuda_copy/cuda |
+[1793811917.238863] [modelexpress-p2p-tcp-kserve-69c4b7ffcc-cjznc:898  :0]   +-------------------------------------+--------------------------------------------+----------------+
+[1793811917.239000] [modelexpress-p2p-tcp-kserve-69c4b7ffcc-cjznc:898  :0]   | mx-auto-worker0-d68e0267 self cfg#0 | active message by ucp_am_send* with reply flag from host memory    |
+[1793811917.239001] [modelexpress-p2p-tcp-kserve-69c4b7ffcc-cjznc:898  :0]   +-------------------------------------+-----------------------------------------------------------------+--+
+[1793811917.239003] [modelexpress-p2p-tcp-kserve-69c4b7ffcc-cjznc:898  :0]   +-------------------------------------+-----------------------------------------------------------------+--+
+[1793811917.243606] [modelexpress-p2p-tcp-kserve-69c4b7ffcc-cjznc:898  :0]   +-------------------------------------+-------------------------------------------------------------+
+[1793811917.243612] [modelexpress-p2p-tcp-kserve-69c4b7ffcc-cjznc:898  :0]   | mx-auto-worker0-d68e0267 self cfg#1 | remote memory write by ucp_put* from host memory to host    |
+[1793811917.243614] [modelexpress-p2p-tcp-kserve-69c4b7ffcc-cjznc:898  :0]   +-------------------------------------+--------------------------------------------------+----------+
+[1793811917.243616] [modelexpress-p2p-tcp-kserve-69c4b7ffcc-cjznc:898  :0]   |                              0..inf | zero-copy                                        | tcp/eth0 |
+[1793811917.243618] [modelexpress-p2p-tcp-kserve-69c4b7ffcc-cjznc:898  :0]   +-------------------------------------+--------------------------------------------------+----------+
+[1793811917.266723] [modelexpress-p2p-tcp-kserve-69c4b7ffcc-cjznc:898  :0]   +-------------------------------------+--------------------------------------------------------------------+
+[1793811917.266730] [modelexpress-p2p-tcp-kserve-69c4b7ffcc-cjznc:898  :0]   | mx-auto-worker0-d68e0267 self cfg#1 | remote memory write by ucp_put* from host memory to cuda/dev[0]    |
+[1793811917.266732] [modelexpress-p2p-tcp-kserve-69c4b7ffcc-cjznc:898  :0]   +-------------------------------------+---------------------------------------------------------+----------+
+[1793811917.266734] [modelexpress-p2p-tcp-kserve-69c4b7ffcc-cjznc:898  :0]   |                              0..inf | software emulation                                      | tcp/eth0 |
+[1793811917.266735] [modelexpress-p2p-tcp-kserve-69c4b7ffcc-cjznc:898  :0]   +-------------------------------------+---------------------------------------------------------+----------+
+[1793811917.268369] [modelexpress-p2p-tcp-kserve-69c4b7ffcc-cjznc:898  :0]   | mx-auto-worker0-d68e0267 self cfg#1 | active message by ucp_am_send* from host memory    |
+[1793811917.268370] [modelexpress-p2p-tcp-kserve-69c4b7ffcc-cjznc:898  :0]   +-------------------------------------+-----------------------------------------+----------+
+[1793811917.268372] [modelexpress-p2p-tcp-kserve-69c4b7ffcc-cjznc:898  :0]   |                                   0 | short                                   | tcp/eth0 |
+[1793811917.268374] [modelexpress-p2p-tcp-kserve-69c4b7ffcc-cjznc:898  :0]   |                            1..65528 | zero-copy                               | tcp/eth0 |
+[1793811917.268375] [modelexpress-p2p-tcp-kserve-69c4b7ffcc-cjznc:898  :0]   |                          65529..inf | multi-frag zero-copy                    | tcp/eth0 |
+[1793811917.268377] [modelexpress-p2p-tcp-kserve-69c4b7ffcc-cjznc:898  :0]   +-------------------------------------+-----------------------------------------+----------+
+[1793811917.270446] [modelexpress-p2p-tcp-kserve-69c4b7ffcc-cjznc:898  :0]   +-------------------------------------+---------------------------------------------------------------------+
+[1793811917.270451] [modelexpress-p2p-tcp-kserve-69c4b7ffcc-cjznc:898  :0]   | mx-auto-worker0-d68e0267 self cfg#1 | active message by ucp_am_send*(fast-completion) from host memory    |
+[1793811917.270453] [modelexpress-p2p-tcp-kserve-69c4b7ffcc-cjznc:898  :0]   +-------------------------------------+----------------------------------------------------------+----------+
+[1793811917.270455] [modelexpress-p2p-tcp-kserve-69c4b7ffcc-cjznc:898  :0]   |                             0..8184 | short                                                    | tcp/eth0 |
+[1793811917.270456] [modelexpress-p2p-tcp-kserve-69c4b7ffcc-cjznc:898  :0]   |                         8185..65528 | zero-copy                                                | tcp/eth0 |
+[1793811917.270458] [modelexpress-p2p-tcp-kserve-69c4b7ffcc-cjznc:898  :0]   |                          65529..inf | multi-frag zero-copy                                     | tcp/eth0 |
+[1793811917.270460] [modelexpress-p2p-tcp-kserve-69c4b7ffcc-cjznc:898  :0]   +-------------------------------------+----------------------------------------------------------+----------+
+(EngineCore pid=898) INFO 11-04 17:05:21 [nixl_transfer.py:1033] Transfer complete: 339 tensors, 1.20 GB in 3.60s (2.7 Gbps)
+(EngineCore pid=898) INFO 11-04 17:05:21 [rdma_strategy.py:680] [Worker 0] [TIMING] RDMA transfer complete: 339 tensors, 1.20 GB, 3.605s, 2.7 Gbps
+2026-11-04 17:05:21,016 - INFO - Transfer complete: 339 tensors, 1.20 GB in 3.60s (2.7 Gbps)
+2026-11-04 17:05:21,016 - INFO - [Worker 0] [TIMING] RDMA transfer complete: 339 tensors, 1.20 GB, 3.605s, 2.7 Gbps
+(EngineCore pid=898) INFO 11-04 17:05:21 [model_runner.py:407] Model loading took 1.12 GiB memory and 19.623085 seconds

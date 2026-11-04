@@ -41,7 +41,7 @@ Prefer `-p` for CI / release suites; use `-t` when you need one or two cases.
 | `maas-3.6` | same as `maas-3.5` | RHOAI 3.6 MaaS suite; add 3.6-only MaaS cases here |
 | `3.4` | single-gpu (+ no-scheduler), cache-aware | RHOAI 3.4 suite |
 | `3.5` | single-gpu, cache-aware, flow-control*, pd, lora*, kv-offloading* | RHOAI 3.5 (auto-skips tests needing more GPUs than available) |
-| `3.6` | same as `3.5` | RHOAI 3.6 EA2 has no differences from 3.5 |
+| `3.6` | `3.5` + agentic-serving, modelexpress-p2p-xks | RHOAI 3.6; `modelexpress-p2p-xks` needs RHAII on xKS with ModelExpress `Managed` (the AKS GPU nightly) |
 | `all` | Broad set (scheduler, P/D, flow-control, lora) | Full conformance sweep |
 
 Exact descriptions and timeouts are in each file.
