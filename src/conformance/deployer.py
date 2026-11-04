@@ -1289,6 +1289,10 @@ class Deployer:
             resources["requests"] = {"cpu": "500m", "memory": "1Gi"}
             resources["limits"] = {"cpu": "1", "memory": "2Gi"}
 
+    def runs_without_rdma(self, tc: TestCase) -> bool:
+        """True under ``--no-rdma`` or for a testcase whose resources declare ``rdma: false``."""
+        return self.no_rdma or not tc.deployment.resources.rdma
+
     @staticmethod
     def _rdma_quantities(container: dict) -> list[dict]:
         """The container's ``limits`` and ``requests`` maps that name an ``rdma/*`` device."""

@@ -12,5 +12,6 @@ testCases:
   - kv-offloading-cpu
   - kv-offloading-tiered
   - agentic-serving
+  - modelexpress-p2p-xks
 parallel: false
 timeout: 180m

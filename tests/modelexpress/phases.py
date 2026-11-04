@@ -214,12 +214,13 @@ class ModelExpressPhases:
         assert strategies and set(strategies.values()) == {P2P_STRATEGY}, (
             f"{pod} loaded with {strategies or 'no strategy'}, want {P2P_STRATEGY!r} on every worker"
         )
-        if deployer.no_rdma:
+        if deployer.runs_without_rdma(tc):
             transports = ucx_transports(log)
             allowed = set(TCP_UCX_ENV["UCX_TLS"].split(","))
             _log(f"{pod} UCX transports: {sorted(transports)}")
             assert "tcp" in transports and transports <= allowed, (
-                f"{pod} selected UCX transports {sorted(transports) or 'none'} under --no-rdma, want tcp within {sorted(allowed)}"
+                f"{pod} selected UCX transports {sorted(transports) or 'none'} without RDMA, want tcp within "
+                f"{sorted(allowed)} (the engine needs {TCP_UCX_ENV})"
             )
 
         after = _wait_for_sources(mx_target, deployer, len(set(before.worker_ids)) + 1, SOURCE_PUBLISH_TIMEOUT)

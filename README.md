@@ -256,6 +256,7 @@ docker run --rm ghcr.io/opendatahub-io/llm-d-e2e --setup 3.5-GA
 | pd-performance | 16 | P/D benchmark with GuideLLM (4 prefill + 2 decode, NIXL, RDMA) |
 | maas-single-gpu | 1 | single-gpu served through MaaS: auth, API key, token rate limit (needs the MaaS stack) |
 | modelexpress-p2p | 2 | ModelExpress native loading: P2P scale-out over RDMA, server TLS, token auth, NetworkPolicy |
+| modelexpress-p2p-xks | 2 | ModelExpress on xKS without RDMA: P2P scale-out over TCP, token auth (in the `3.6` profile) |
 
 ## Test Phases
 
@@ -350,6 +351,8 @@ The benchmark adds three phases after the standard conformance checks:
 The gRPC probes run in the engine pod with its own `modelexpress` client. ModelExpress phases live in `tests/modelexpress/` and are deselected for test cases whose manifest declares no `ModelExpressServer`.
 
 `modelexpress-p2p` is opt-in (`optIn: true`): it is in no profile and runs only when named.
+
+`modelexpress-p2p-xks` is the same test for RHAII on xKS clusters without RDMA, and is in the `3.6` profile that the RHAII AKS GPU nightly runs. Its manifest uses a plaintext server, the compatibility NetworkPolicy and the RHAII preset vLLM image, and sets `UCX_TLS=tcp,cuda_copy` and `UCX_PROTO_INFO=y` itself. The TLS and NetworkPolicy phases skip, and because the testcase declares `resources.rdma: false`, phase 40c checks for TCP lanes as it does under `--no-rdma`. It needs RHAII 3.6 installed with `components.kserve.spec.modelExpress.managementState: Managed`.
 
 To admit the engine pods through Kueue, pass `--queue-name <localqueue>`. The LocalQueue must exist in the test namespace, the namespace must be Kueue-managed (`kueue.openshift.io/managed=true` on OpenShift), and its ClusterQueue must cover `rdma/*` as well as `nvidia.com/gpu`; Kueue keeps pods that request an uncovered resource gated.
 

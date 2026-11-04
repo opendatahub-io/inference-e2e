@@ -67,6 +67,7 @@ Enable only what the topology proves:
 | `multi-pool` | Multiple InferencePools |
 | `maas-single-gpu` | single-gpu through MaaS (auth, API key, rate limit); `validation.maas.endpointScheme` |
 | `modelexpress-p2p` | ModelExpress native loading: P2P scale-out, server TLS, token auth, NetworkPolicy |
+| `modelexpress-p2p-xks` | `modelexpress-p2p` for xKS without RDMA: P2P over TCP, plaintext server, token auth; `resources.rdma: false` |
 
 Exact descriptions are in each file’s `description` field.
 

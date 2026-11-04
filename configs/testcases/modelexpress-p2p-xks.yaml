@@ -1,0 +1,36 @@
+name: modelexpress-p2p-xks
+description: "ModelExpress native loading on xKS without RDMA: server and engine wiring, P2P scale-out over TCP, token auth"
+model:
+  name: Qwen/Qwen3-0.6B
+  uri: hf://Qwen/Qwen3-0.6B
+  displayName: qwen3-0.6b-modelexpress-p2p-xks
+  category: single-node-gpu
+  cache:
+    # ModelExpress downloads the weights itself; a pvc:// URI would bypass it.
+    enabled: false
+deployment:
+  # Plaintext ModelExpressServer (token auth, tenant isolation, compatibility NetworkPolicy)
+  # plus a native-mode LLMInferenceService on UCX over TCP; phase 40c scales it to a second replica.
+  manifestPath: modelexpress-p2p-xks.yaml
+  requiresGpu: true
+  readyTimeout: 20m
+  resources:
+    cpu: "4"
+    memory: 16Gi
+    rdma: false
+validation:
+  healthEndpoint: /health
+  healthPort: 8000
+  healthScheme: HTTPS
+  inferenceCheck: true
+  testPrompts:
+    - "What is Kubernetes?"
+  expectedCodes: [200]
+  timeout: 2m
+  retryAttempts: 3
+  retryInterval: 15s
+  metricsCheck:
+    enabled: true
+    checkVLLM: true
+cleanup: true
+optIn: true

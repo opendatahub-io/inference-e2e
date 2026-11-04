@@ -2129,6 +2129,22 @@ def test_no_rdma_moves_rdma_containers_onto_tcp(tmp_path):
     assert spec["template"]["containers"][1] == sidecar
 
 
+@pytest.mark.parametrize(
+    ("no_rdma", "testcase", "expected"),
+    [
+        (False, "modelexpress-p2p", False),
+        (True, "modelexpress-p2p", True),
+        (False, "modelexpress-p2p-xks", True),
+    ],
+)
+def test_runs_without_rdma_follows_the_flag_or_the_testcase(no_rdma, testcase, expected):
+    from conformance.deployer import Deployer
+
+    tc = load_testcase(f"configs/testcases/{testcase}.yaml")
+
+    assert Deployer(no_rdma=no_rdma).runs_without_rdma(tc) is expected
+
+
 def test_no_rdma_and_rdma_resource_are_exclusive():
     from conformance.deployer import Deployer
 

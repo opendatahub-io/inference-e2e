@@ -20,6 +20,7 @@ from conformance.config import (
     load_testcase,
     load_testcases_from_dir,
     parse_duration,
+    resolve_profile,
 )
 from conformance.metrics import ScrapeResult, parse_prometheus, validate_flow_control, validate_scheduler
 
@@ -62,6 +63,16 @@ def test_a_run_naming_no_testcase_leaves_out_opt_in_cases():
     assert "modelexpress-p2p" not in selected
     assert "single-gpu-smoke" in selected
     assert [tc.name for tc in filter_by_names(cases, ["modelexpress-p2p"])] == ["modelexpress-p2p"]
+
+
+def test_36_profile_runs_the_xks_modelexpress_case_without_rdma():
+    cases = {tc.name: tc for tc in resolve_profile(load_profile("configs/profiles/3.6.yaml"), "configs/testcases")}
+
+    xks = cases["modelexpress-p2p-xks"]
+    assert "modelexpress-p2p" not in cases
+    assert xks.opt_in and xks.deployment.requires_gpu
+    assert not xks.deployment.resources.rdma
+    assert xks.deployment.manifest_path == "modelexpress-p2p-xks.yaml"
 
 
 def test_dir_loaders_skip_readme(tmp_path):
