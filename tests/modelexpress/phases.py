@@ -21,7 +21,7 @@ from pathlib import Path
 import pytest
 
 from conformance.config import TestCase
-from conformance.deployer import Deployer
+from conformance.deployer import TCP_UCX_ENV, Deployer
 from conformance.modelexpress import (
     CA_FILE,
     ENGINE_CONDITION,
@@ -41,10 +41,12 @@ from conformance.modelexpress import (
     manifest_servers,
     network_policy_problems,
     outsider_pod,
+    p2p_transfers,
     pod_completion,
     run_probe,
     scc_binding_problems,
     tcp_reachable,
+    ucx_transports,
     wait_for_pod_ready,
     wait_for_server_ready,
 )
@@ -206,11 +208,19 @@ class ModelExpressPhases:
         pod = _wait_for_new_pod(deployer, tc.name, existing, timeout)
         wait_for_pod_ready(deployer.kubectl, pod, deployer.namespace, timeout)
 
-        strategies = loaded_strategies(deployer.kubectl("logs", pod, "-n", deployer.namespace, "-c", ENGINE_CONTAINER))
-        _log(f"{pod} loaded with {strategies}")
+        log = deployer.kubectl("logs", pod, "-n", deployer.namespace, "-c", ENGINE_CONTAINER)
+        strategies = loaded_strategies(log)
+        _log(f"{pod} loaded with {strategies}; P2P transfer {p2p_transfers(log)}")
         assert strategies and set(strategies.values()) == {P2P_STRATEGY}, (
             f"{pod} loaded with {strategies or 'no strategy'}, want {P2P_STRATEGY!r} on every worker"
         )
+        if deployer.no_rdma:
+            transports = ucx_transports(log)
+            allowed = set(TCP_UCX_ENV["UCX_TLS"].split(","))
+            _log(f"{pod} UCX transports: {sorted(transports)}")
+            assert "tcp" in transports and transports <= allowed, (
+                f"{pod} selected UCX transports {sorted(transports) or 'none'} under --no-rdma, want tcp within {sorted(allowed)}"
+            )
 
         after = _wait_for_sources(mx_target, deployer, len(set(before.worker_ids)) + 1, SOURCE_PUBLISH_TIMEOUT)
         assert after.ok, f"ListSources after scale-out: {after.describe()}"

@@ -82,6 +82,11 @@ def pytest_addoption(parser):
         "--rdma-resource", default="", help="Extended resource requested in place of the manifest's rdma/* devices"
     )
     parser.addoption(
+        "--no-rdma",
+        action="store_true",
+        help="Drop the manifest's rdma/* devices and IPC_LOCK and run UCX over TCP (clusters without RDMA)",
+    )
+    parser.addoption(
         "--queue-name", default="", help="Kueue LocalQueue in the test namespace that admits the engine pods"
     )
 
@@ -161,6 +166,7 @@ def deployer(request) -> Deployer:
         decode_node_selector=request.config.getoption("--decode-node-selector"),
         prefill_node_selector=request.config.getoption("--prefill-node-selector"),
         rdma_resource=request.config.getoption("--rdma-resource"),
+        no_rdma=request.config.getoption("--no-rdma"),
         queue_name=request.config.getoption("--queue-name"),
     )
     # The test namespace belongs to the suite: services left by a killed run hold

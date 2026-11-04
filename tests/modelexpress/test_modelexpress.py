@@ -18,9 +18,11 @@ from conformance.modelexpress import (
     loaded_strategies,
     manifest_servers,
     network_policy_problems,
+    p2p_transfers,
     parse_probe_output,
     patch_modelexpress_refs,
     scc_binding_problems,
+    ucx_transports,
 )
 
 _FIXTURES = Path(__file__).parent / "fixtures"
@@ -196,6 +198,39 @@ def test_a_worker_whose_every_strategy_failed_loaded_nothing():
     )
 
     assert loaded_strategies(log) == {}
+
+
+def test_p2p_transfer_summary_is_read_per_worker():
+    assert p2p_transfers((_FIXTURES / "engine-p2p.log").read_text()) == {0: "339 tensors, 1.20 GB, 0.068s, 142.4 Gbps"}
+    assert p2p_transfers((_FIXTURES / "engine-p2p-tcp.log").read_text()) == {
+        0: "339 tensors, 1.20 GB, 3.605s, 2.7 Gbps"
+    }
+    assert p2p_transfers((_FIXTURES / "engine-cold.log").read_text()) == {}
+
+
+def test_tcp_replica_selects_only_tcp_and_cuda_copy():
+    log = (_FIXTURES / "engine-p2p-tcp.log").read_text()
+
+    assert set(loaded_strategies(log).values()) == {"rdma"}
+    assert ucx_transports(log) == {"tcp", "cuda_copy"}
+
+
+def test_ucx_transports_ignore_table_titles_and_read_multi_lane_rows():
+    prefix = "[1793811917.266730] [engine-0:898  :0]   "
+    log = "\n".join(
+        [
+            prefix + "| mx-auto-worker0 self cfg#1 | remote memory write by ucp_put* from host memory to cuda/dev[0] |",
+            prefix + "|  0..inf | zero-copy | 50% on rc_mlx5/mlx5_0:1 and 50% on rc_mlx5/mlx5_3:1 |",
+            prefix + "|  0..inf | multi-frag zero-copy | dc_mlx5/mlx5_1:1, tcp/eth0 |",
+            "INFO [nixl_transfer.py:283] | ok | not a | ucx/table |",
+        ]
+    )
+
+    assert ucx_transports(log) == {"rc_mlx5", "dc_mlx5", "tcp"}
+
+
+def test_replica_without_proto_info_reports_no_transports():
+    assert ucx_transports((_FIXTURES / "engine-p2p.log").read_text()) == set()
 
 
 def test_probe_output_is_read_past_client_logging():

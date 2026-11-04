@@ -49,6 +49,9 @@ OUTSIDER_POD = "modelexpress-outsider"
 _PROBE_SCRIPT = Path(__file__).with_name("modelexpress_probe.py")
 _TRYING_STRATEGY = re.compile(r"\[Worker (\d+)\] Trying strategy: (\S+)")
 _FAILED_STRATEGY = re.compile(r"\[Worker (\d+)\] Strategy (\S+) (?:failed|raised unexpected error)")
+_P2P_TRANSFER = re.compile(r"\[Worker (\d+)\] \[TIMING\] RDMA transfer complete: (.+)$")
+_UCX_TABLE_ROW = re.compile(r"^\[[\d.]+\] \[[^\]]+\]\s+(\|.*\|)\s*$")
+_UCX_LANE = re.compile(r"([a-z][a-z0-9_]*)/[^\s,]+")
 
 Kubectl = Callable[..., str]
 
@@ -327,6 +330,26 @@ def loaded_strategies(log: str) -> dict[int, str]:
         elif (match := _FAILED_STRATEGY.search(line)) and current.get(int(match[1])) == match[2]:
             current[int(match[1])] = None
     return {worker: strategy for worker, strategy in current.items() if strategy}
+
+
+def p2p_transfers(log: str) -> dict[int, str]:
+    """Each worker's P2P transfer summary (tensors, bytes, seconds, rate), read from an engine log."""
+    return {int(match[1]): match[2] for line in log.splitlines() if (match := _P2P_TRANSFER.search(line))}
+
+
+def ucx_transports(log: str) -> set[str]:
+    """UCX transports the protocol tables printed under ``UCX_PROTO_INFO=y`` select, e.g. ``{"tcp", "cuda_copy"}``.
+
+    Each protocol row has three cells (size range, protocol, lanes); a table's
+    title row has two and names memory types, not transports.
+    """
+    transports: set[str] = set()
+    for line in log.splitlines():
+        if row := _UCX_TABLE_ROW.match(line):
+            cells = row[1].strip("|").split("|")
+            if len(cells) == 3:
+                transports.update(_UCX_LANE.findall(cells[2]))
+    return transports
 
 
 def parse_probe_output(output: str) -> ProbeResult:

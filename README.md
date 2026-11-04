@@ -358,7 +358,13 @@ uv run llm-d-e2e --setup 3.6-GA
 uv run llm-d-e2e -t modelexpress-p2p --platform ocp --rdma-resource rdma/rdma_shared_device_ib --html reports/modelexpress-report.html -v
 ```
 
-Prerequisites (ModelExpress): OpenShift with RHOAI 3.6 and DSC `kserve.modelExpress: Managed`, 2 GPUs with an RDMA device (`--rdma-resource` names the cluster's device-plugin resource in place of the manifest's `rdma/rdma_shared_device_ib`), and `aipcc-pull-secret` in the test namespace for the engine image (the default vLLM preset image does not include the `modelexpress` client).
+On a cluster without RDMA, pass `--no-rdma` instead of `--rdma-resource`. Every container that requests an `rdma/*` device loses the request, `IPC_LOCK`, and its `UCX_*` and `MX_RDMA_*` env, and gets `UCX_TLS=tcp,cuda_copy` and `UCX_PROTO_INFO=y`. The P2P transfer then runs over the pod network, so a NetworkPolicy that selects the engine pods must admit traffic between them. Phase 40c also checks that the new replica's UCX protocol tables select only `tcp` and `cuda_copy`.
+
+```bash
+uv run llm-d-e2e -t modelexpress-p2p --platform ocp --no-rdma -v
+```
+
+Prerequisites (ModelExpress): OpenShift with RHOAI 3.6 and DSC `kserve.modelExpress: Managed`, 2 GPUs with an RDMA device (`--rdma-resource` names the cluster's device-plugin resource in place of the manifest's `rdma/rdma_shared_device_ib`) or any 2 GPUs with `--no-rdma`, and `aipcc-pull-secret` in the test namespace for the engine image (the default vLLM preset image does not include the `modelexpress` client).
 
 ## MaaS Tests
 

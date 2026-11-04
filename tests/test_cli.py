@@ -41,6 +41,31 @@ def test_rdma_resource_is_forwarded_to_pytest(monkeypatch):
     assert command[command.index("--rdma-resource") + 1] == "rdma/roce_gdr"
 
 
+def test_no_rdma_is_forwarded_to_pytest(monkeypatch):
+    import conformance.cli as cli
+
+    commands = []
+    monkeypatch.setattr(sys, "argv", ["llm-d-e2e", "-t", "modelexpress-p2p", "--no-rdma"])
+    monkeypatch.setattr(cli, "_run_pytest", lambda cmd: commands.append(cmd) or 0)
+    with pytest.raises(SystemExit):
+        cli.main()
+    assert "--no-rdma" in commands[0]
+
+
+def test_no_rdma_rejects_rdma_resource(monkeypatch):
+    import conformance.cli as cli
+
+    commands = []
+    monkeypatch.setattr(
+        sys, "argv", ["llm-d-e2e", "-t", "modelexpress-p2p", "--no-rdma", "--rdma-resource", "rdma/roce_gdr"]
+    )
+    monkeypatch.setattr(cli, "_run_pytest", lambda cmd: commands.append(cmd) or 0)
+    with pytest.raises(SystemExit) as exit_info:
+        cli.main()
+    assert exit_info.value.code == 2
+    assert commands == []
+
+
 def test_queue_name_is_forwarded_to_pytest(monkeypatch):
     import conformance.cli as cli
 

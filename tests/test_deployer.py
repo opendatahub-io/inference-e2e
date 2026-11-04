@@ -17,6 +17,7 @@ Coverage areas:
 
 from __future__ import annotations
 
+import copy
 import sys
 from pathlib import Path
 
@@ -2068,6 +2069,71 @@ def test_manifest_rdma_requests_are_kept_without_rdma_resource(tmp_path):
 
     for template in _pod_templates(patched[0]["spec"]):
         assert template["containers"][0]["resources"]["limits"]["rdma/rdma_shared_device_ib"] == "1"
+
+
+def test_no_rdma_moves_rdma_containers_onto_tcp(tmp_path):
+    import yaml
+
+    from conformance.deployer import TCP_UCX_ENV, Deployer
+
+    def rdma_container():
+        return {
+            "name": "main",
+            "securityContext": {"capabilities": {"add": ["IPC_LOCK", "SYS_PTRACE"]}},
+            "env": [
+                {"name": "HF_HOME", "value": "/models"},
+                {"name": "UCX_TLS", "value": "rc,sm,cuda_ipc,cuda_copy"},
+                {"name": "UCX_RNDV_SCHEME", "value": "get_zcopy"},
+                {"name": "MX_RDMA_NIC_PIN", "value": "auto"},
+            ],
+            "resources": {
+                "limits": {"nvidia.com/gpu": "1", "rdma/rdma_shared_device_ib": "1"},
+                "requests": {"nvidia.com/gpu": "1", "rdma/rdma_shared_device_ib": "1"},
+            },
+        }
+
+    sidecar = {
+        "name": "sidecar",
+        "securityContext": {"capabilities": {"add": ["IPC_LOCK"]}},
+        "env": [{"name": "UCX_TLS", "value": "rc"}],
+    }
+    manifest_path = tmp_path / "single-gpu-smoke.yaml"
+    manifest_path.write_text(
+        yaml.dump(
+            {
+                "apiVersion": "serving.kserve.io/v1alpha2",
+                "kind": "LLMInferenceService",
+                "metadata": {"name": "single-gpu-smoke"},
+                "spec": {
+                    "template": {"containers": [rdma_container(), copy.deepcopy(sidecar)]},
+                    "worker": {"containers": [rdma_container()]},
+                    "prefill": {
+                        "template": {"containers": [rdma_container()]},
+                        "worker": {"containers": [rdma_container()]},
+                    },
+                },
+            }
+        )
+    )
+    tc = load_testcase("configs/testcases/single-gpu-smoke.yaml")
+
+    spec = Deployer(manifest_dir=str(tmp_path), no_rdma=True)._patch_manifest(manifest_path, tc)[0]["spec"]
+
+    for template in _pod_templates(spec):
+        main = template["containers"][0]
+        assert main["resources"] == {"limits": {"nvidia.com/gpu": "1"}, "requests": {"nvidia.com/gpu": "1"}}
+        assert main["securityContext"]["capabilities"]["add"] == ["SYS_PTRACE"]
+        assert main["env"] == [{"name": "HF_HOME", "value": "/models"}] + [
+            {"name": name, "value": value} for name, value in TCP_UCX_ENV.items()
+        ]
+    assert spec["template"]["containers"][1] == sidecar
+
+
+def test_no_rdma_and_rdma_resource_are_exclusive():
+    from conformance.deployer import Deployer
+
+    with pytest.raises(ValueError, match="mutually exclusive"):
+        Deployer(rdma_resource="rdma/roce_gdr", no_rdma=True)
 
 
 def test_queue_name_labels_every_llminferenceservice(tmp_path):
