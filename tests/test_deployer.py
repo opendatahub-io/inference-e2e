@@ -344,6 +344,62 @@ spec: {}
     assert deleted_services == ["case", "service-b"]
 
 
+def test_cleanup_deletes_services_before_the_configs_they_reference(tmp_path, monkeypatch):
+    """A ``baseRefs`` document is a dependency of the service, not a companion of
+    it: KServe answers its delete with ``DeletionBlocked ... referenced by 1
+    LLMInferenceService(s)`` and the object then sits in Terminating, so the
+    service has to be deleted first (a real batch-gateway-async-sql run hung in
+    phase 99 on exactly this)."""
+    from conformance.deployer import Deployer
+
+    (tmp_path / "with-config.yaml").write_text(
+        """apiVersion: serving.kserve.io/v1alpha2
+kind: LLMInferenceServiceConfig
+metadata:
+  name: case-sim
+spec: {}
+---
+apiVersion: serving.kserve.io/v1alpha2
+kind: LLMInferenceService
+metadata:
+  name: case
+spec:
+  baseRefs:
+    - name: case-sim
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: case-secrets
+"""
+    )
+    tc = load_testcase("configs/testcases/batch-gateway-async-sql.yaml")
+    tc.name = "case"
+    tc.deployment.manifest_path = "with-config.yaml"
+    deployer = Deployer(manifest_dir=str(tmp_path))
+    deletes = []
+
+    def fake_kubectl(*args, **kwargs):
+        if args[0] == "delete":
+            deletes.append(args)
+        return ""
+
+    monkeypatch.setattr(deployer, "kubectl", fake_kubectl)
+
+    deployer.cleanup(tc, timeout=1)
+
+    order = [(args[1], args[2]) for args in deletes]
+    service = ("llminferenceservice", "case")
+    config = ("llminferenceserviceconfig", "case-sim")
+    assert order.index(("secret", "case-secrets")) < order.index(service) < order.index(config)
+    # The config is the last thing deleted: nothing may reference it by then.
+    assert order[-1] == config
+    # Every manifest-document delete is bounded, so one stuck finalizer cannot
+    # hang phase 99 (the metrics RBAC cleanup is not manifest-derived).
+    manifest_deletes = [args for args in deletes if args[1] != "clusterrolebinding"]
+    assert all("--timeout" in args for args in manifest_deletes)
+
+
 @pytest.mark.parametrize("failed_service", ["case", "service-b"])
 def test_cleanup_failed_delete_stays_pending_for_teardown_retry(tmp_path, monkeypatch, failed_service):
     import subprocess

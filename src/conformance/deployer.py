@@ -65,6 +65,14 @@ KSERVE_INGRESS_CONFIG_MAP = "inferenceservice-config"
 KSERVE_INGRESS_CONFIG_KEYS = ("kserveIngressGateway", "ingressGateway")
 KSERVE_INGRESS_CONFIG_NAMESPACES = ("redhat-ods-applications", "opendatahub")
 
+# Manifest documents an LLMInferenceService depends on through ``spec.baseRefs``.
+# KServe refuses to delete one while a service still references it
+# (``DeletionBlocked: ... referenced by 1 LLMInferenceService(s)``), and the
+# object then sits in Terminating, so ``kubectl delete`` waits on a finalizer
+# that cannot clear. They therefore have to be deleted *after* the services,
+# unlike the other companion documents.
+SERVICE_DEPENDENCY_KINDS = ("LLMInferenceServiceConfig",)
+
 
 def _is_cluster_internal(address: str) -> bool:
     """True for in-cluster DNS names, which the test runner cannot resolve."""
@@ -1335,11 +1343,31 @@ class Deployer:
         errors: list[RuntimeError] = []
         # Companion resources (e.g. MaaS model refs and policies) go first, in
         # reverse manifest order, so nothing is left referencing a deleted service.
-        for kind, name, namespace in reversed(self._extra_documents(tc)):
+        # Documents the service depends on (``baseRefs``) are the exception: KServe
+        # blocks their deletion until the service is gone, so they go last.
+        extras = list(reversed(self._extra_documents(tc)))
+        companions = [doc for doc in extras if doc[0] not in SERVICE_DEPENDENCY_KINDS]
+        dependencies = [doc for doc in extras if doc[0] in SERVICE_DEPENDENCY_KINDS]
+
+        def delete_companion(kind: str, name: str, namespace: str) -> None:
             try:
-                self.kubectl("delete", kind.lower(), name, "-n", namespace, "--ignore-not-found")
+                self.kubectl(
+                    "delete",
+                    kind.lower(),
+                    name,
+                    "-n",
+                    namespace,
+                    "--timeout",
+                    f"{int(timeout)}s",
+                    "--ignore-not-found",
+                )
             except RuntimeError as e:
+                # Bounded by --timeout: a document stuck behind a finalizer must
+                # not keep phase 99 (or teardown) from finishing the other deletes.
                 errors.append(e)
+
+        for kind, name, namespace in companions:
+            delete_companion(kind, name, namespace)
         for name in service_names:
             self.cleanup_metrics_rbac(name)
             try:
@@ -1355,6 +1383,8 @@ class Deployer:
                 )
             except RuntimeError as e:
                 errors.append(e)
+        for kind, name, namespace in dependencies:
+            delete_companion(kind, name, namespace)
         if errors:
             # The case stays pending, so session teardown retries the deletes.
             raise errors[0]

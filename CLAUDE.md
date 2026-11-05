@@ -90,7 +90,7 @@ The `--mode` flag controls which phases execute:
 | 30c | `test_30c_maas_api_key` | API key creation with a K8s user token → 201 |
 | 30d | `test_30d_maas_inference` | Authenticated MaaS inference → 200 |
 | 30e | `test_30e_maas_rate_limit` | Subscription token rate limit → 429 after quota |
-| 99 | `test_99_cleanup` | Delete the manifest's resources (companion documents, then LLMInferenceServices) |
+| 99 | `test_99_cleanup` | Delete the manifest's resources (companion documents, then LLMInferenceServices, then the `baseRefs` documents — e.g. `LLMInferenceServiceConfig` — those services depend on) |
 
 Phases a test case's config turns off are deselected at collection, not skipped: each such phase carries `@pytest.mark.applies_when.with_args(predicate)`, and `conftest.py:pytest_collection_modifyitems` drops items whose `predicate(tc)` is false (the summary reports them as `deselected`). Use `.with_args(...)` — a mark called with a lone callable treats it as the decorated function. Runtime conditions (missing manifest, failed deploy, too few GPUs, `--nocleanup`, `--mode discover`) still `pytest.skip()` and show as SKIPPED.
 
