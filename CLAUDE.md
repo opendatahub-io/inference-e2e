@@ -62,12 +62,12 @@ The `--mode` flag controls which phases execute:
 
 ### Ordered conformance phases
 
-`test_conformance.py:TestConformance` composes three phase groups: `LLMDPhases` (01–21, in `test_conformance.py`), `MaaSPhases` (30a–30e, in `tests/maas/phases.py`), and `CleanupPhase` (99). pytest collects inherited test methods in reverse-MRO order, so `class TestConformance(CleanupPhase, MaaSPhases, LLMDPhases)` runs the groups in that order for each test case; within a group, methods run in definition order:
+`test_conformance.py:TestConformance` composes four phase groups: `LLMDPhases` (01–21, in `test_conformance.py`), `MaaSPhases` (30a–30e, in `tests/maas/phases.py`), `BatchPhases` (40a–40k, in `tests/batch/phases.py`, deselected unless `validation.batchGateway.enabled`), and `CleanupPhase` (99). pytest collects inherited test methods in reverse-MRO order, so `class TestConformance(CleanupPhase, BatchPhases, MaaSPhases, LLMDPhases)` runs the groups in that order for each test case; within a group, methods run in definition order:
 
 | Phase | Method | What it validates |
 |-------|--------|-------------------|
 | 01 | `test_01_prereq` | CRD exists, manifest present |
-| 02 | `test_02_deploy` | Apply LLMInferenceService manifest |
+| 02 | `test_02_deploy` | Apply LLMInferenceService manifest; batch testcases probe the platform first (`--batch-gateway auto` skips / `require` fails, via `require_batch_platform()`) |
 | 03 | `test_03_service` | Service creation |
 | 04 | `test_04_gateway` | Gateway programmed with address |
 | 05 | `test_05_pods` | Pods running without crashes |
@@ -90,9 +90,11 @@ The `--mode` flag controls which phases execute:
 | 30c | `test_30c_maas_api_key` | API key creation with a K8s user token → 201 |
 | 30d | `test_30d_maas_inference` | Authenticated MaaS inference → 200 |
 | 30e | `test_30e_maas_rate_limit` | Subscription token rate limit → 429 after quota |
-| 99 | `test_99_cleanup` | Delete the manifest's resources (companion documents, then LLMInferenceServices) |
+| 99 | `test_99_cleanup` | Delete the manifest's resources (companion documents, then LLMInferenceServices, then the `baseRefs` documents — e.g. `LLMInferenceServiceConfig` — those services depend on) |
 
 Phases a test case's config turns off are deselected at collection, not skipped: each such phase carries `@pytest.mark.applies_when.with_args(predicate)`, and `conftest.py:pytest_collection_modifyitems` drops items whose `predicate(tc)` is false (the summary reports them as `deselected`). Use `.with_args(...)` — a mark called with a lone callable treats it as the decorated function. Runtime conditions (missing manifest, failed deploy, too few GPUs, `--nocleanup`, `--mode discover`) still `pytest.skip()` and show as SKIPPED.
+
+Batch phases 40a–40k run between 21 and 99 for test cases with `validation.batchGateway.enabled`; each one gates through `require_batch_target()` (manifest, deployed, platform available). See [Adding a Batch Gateway Test Case](docs/adding-a-batch-test-case.md).
 
 ### MaaS testcases
 
@@ -105,6 +107,8 @@ Deploy applies documents that declare another namespace (MaaS policies live in `
 Two helpers control cascading skips across phases:
 - `_require_manifest(tc)` — skips if the manifest file doesn't exist for the current branch.
 - `_require_deployed(deployer, tc, test_mode)` — skips if deploy failed or was skipped. In discover mode, this check is bypassed.
+
+`_require_batch_platform(deployer, tc, batch_gateway_mode)` runs inside `test_02_deploy`, after that phase's `--mode discover`, manifest, GPU, and `LLMInferenceService` CRD skips and before `kubectl apply`, for testcases with `validation.batchGateway.enabled`. It reuses `require_batch_platform()` so a platform without the `LLMBatchGateway` CRD (or its operator) skips with the `batch_platform_state()` diagnostic instead of failing on "no matches for kind"; `--batch-gateway require` fails fast with that same message. Batch phase 40a re-checks through `require_batch_target()`, which also covers `--mode discover` runs where phase 02 is skipped.
 
 `test_99_cleanup` is gated separately by `Deployer.needs_cleanup(tc.name)`, which becomes true as soon as `kubectl apply` is attempted. A multi-document manifest can partially apply before a later document is rejected, so a failed deploy still gets cleaned up.
 
@@ -143,12 +147,13 @@ The gateway service name and namespace are RHOAI-specific hardcoded values in `d
 ### Source modules (`src/conformance/`)
 
 - **config.py** — Dataclass config types and YAML loaders. YAML keys are camelCase, Python fields are snake_case; `_build()` handles recursive conversion.
-- **deployer.py** — `Deployer`: manages LLMInferenceService lifecycle via `kubectl` subprocess calls. Handles deploy, wait-for-ready, port-forwarding, manifest patching (mock image, pull secrets, auth disable, LoRA spec injection, node selectors, env overrides), EPP metrics RBAC, pull secret propagation, namespace labeling for gateway access, and cleanup.
+- **deployer.py** — `Deployer`: manages LLMInferenceService lifecycle via `kubectl` subprocess calls. Handles deploy, wait-for-ready, port-forwarding, manifest patching (mock image, pull secrets, auth disable, LoRA spec injection, node selectors, env overrides, batch dispatch URL via `_patch_batch_dispatch()`), EPP metrics RBAC, pull secret propagation, namespace labeling for gateway access, and cleanup.
 - **client.py** — `LLMClient`: HTTP client (httpx) for `/health`, `/v1/models`, `/v1/completions`, `/v1/chat/completions`, `/v1/messages`, `/v1/responses`.
 - **metrics.py** — `Scraper`: scrapes Prometheus metrics from pods via `kubectl exec` (python3/wget), falling back to port-forward + httpx for minimal containers. Per-topology validators: `validate_vllm_basic`, `validate_cache_aware`, `validate_pd`, `validate_scheduler`, `validate_flow_control`, `validate_lora`. `parse_prometheus()` parses text exposition format.
 - **model.py** — `ModelDownloader`: creates PVCs and download Jobs for pre-caching models from HuggingFace.
 - **report.py** — JSON report generation with pass/fail/skip summary.
 - **benchmark.py** — `run_benchmark()`: creates a GuideLLM K8s Job, parses JSON results delimited by `---GUIDELLM_JSON_START---` marker.
+- **batch.py** — `BatchGatewayClient` (OpenAI files/batches over the `LLMBatchGateway` API server), platform diagnostics, and the deploy-time dispatch rewrite: `dispatch_target()` builds `<scheme>://<gateway-svc>.<gw-ns>.svc.cluster.local:<port>/<test-ns>/<llmisvc>` (`https` + `tls.insecureSkipVerify` on 443), `patch_batch_dispatch()` rewrites `asyncConfig.inferenceGateway.url` and every `asyncConfig.sql.queuesConfig[].igwBaseURL` in the manifest. `validation.batchGateway.dispatchUrl` overrides the URL verbatim and skips gateway discovery.
 
 ### Metrics validation topology
 
@@ -228,7 +233,7 @@ As of [odh-gitops PR#156](https://github.com/opendatahub-io/odh-gitops/pull/156)
 
 ## Config files
 
-- **configs/testcases/*.yaml** — Each file maps to one `TestCase` dataclass. Contains model info (including LoRA adapters), deployment spec, validation criteria, and metrics check flags.
+- **configs/testcases/*.yaml** — Each file maps to one `TestCase` dataclass. Contains model info (including LoRA adapters), deployment spec, validation criteria, and metrics check flags. `validation.batchGateway.dispatchUrl` pins the batch dispatch URL when the derived one is not reachable.
 - **configs/profiles/*.yaml** — Named groups of test case names. Includes version-specific profiles (`3.4.yaml`, `3.5.yaml`, `3.5-gpu.yaml`, `maas-3.5.yaml`, `maas-3.6.yaml`) and topology profiles (`smoke`, `pd`, `cache-aware`, `flow-control`, `lora`).
 - **deploy/manifests/*.yaml** — LLMInferenceService manifests, cloned from the manifest repo via `--setup`. Gitignored.
 - **deploy/manifests/.manifest-ref** — Tracks the active manifest branch, repo URL, commit SHA, and clone timestamp.

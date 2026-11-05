@@ -21,11 +21,13 @@ Class-scoped fixtures (per ``tc``):
   - ``endpoint`` / ``client`` — gateway port-forward (inference)
   - ``pod_endpoint`` / ``pod_client`` — direct pod port-forward
     (health + ``/v1/models``; EPP only routes inference)
+  - ``batch_gateway_mode`` / ``batch_client`` — batch API server client for
+    testcases with ``validation.batchGateway.enabled``
   - ``scraper`` — Prometheus metrics via kubectl exec / port-forward
 
 Notable options: ``--mode`` (deploy|discover|cache), ``--mock``,
-``--model-source``, ``--render-image``, auth/pull-secret, PVC storage,
-P/D node selectors, GuideLLM image override.
+``--model-source``, ``--render-image``, ``--batch-gateway`` (auto|require),
+auth/pull-secret, PVC storage, P/D node selectors, GuideLLM image override.
 """
 
 from __future__ import annotations
@@ -38,6 +40,8 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
+from batch.phases import require_batch_target
+from conformance.batch import BatchGatewayClient
 from conformance.config import (
     TestCase,
     apply_manifest_model_config,
@@ -75,6 +79,12 @@ def pytest_addoption(parser):
     parser.addoption("--storage-class", default="", help="StorageClass for PVC")
     parser.addoption("--storage-size", default="", help="Override PVC size")
     parser.addoption("--guidellm-image", default="", help="GuideLLM benchmark image override")
+    parser.addoption(
+        "--batch-gateway",
+        default="auto",
+        choices=["auto", "require"],
+        help="Batch phases: auto skips when the platform lacks batch support, require fails with diagnostics",
+    )
     parser.addoption("--decode-node-selector", default="", help="Node selector for decode pods (key=value)")
     parser.addoption("--prefill-node-selector", default="", help="Node selector for prefill pods (key=value)")
 
@@ -219,6 +229,41 @@ def pod_endpoint(deployer: Deployer, tc: TestCase, request) -> str:
 @pytest.fixture(scope="class")
 def pod_client(pod_endpoint: str, bearer_token: str) -> LLMClient:
     c = LLMClient(base_url=pod_endpoint, bearer_token=bearer_token)
+    yield c
+    c.close()
+
+
+@pytest.fixture(scope="class")
+def batch_gateway_mode(request) -> str:
+    """``auto`` (skip when the platform lacks batch support) or ``require`` (fail with diagnostics)."""
+    return request.config.getoption("--batch-gateway")
+
+
+@pytest.fixture(scope="class")
+def batch_client(deployer: Deployer, tc: TestCase, test_mode: str, batch_gateway_mode: str):
+    """Batch-gateway API server client for testcases with ``validation.batchGateway.enabled``.
+
+    Endpoint resolution: ``validation.batchGateway.endpoint`` when set, else a
+    port-forward to ``svc/<testcase-name>-apiserver:8000`` in the test namespace
+    (stopped at session teardown with the other forwards), else the gateway
+    route. The fixture runs before the phase bodies, so it applies the same
+    manifest/deploy/platform gates: a testcase that was never deployed must not
+    leave a port-forward behind.
+
+    TODO: authenticated batch gateways need an inference API key (the manifest's
+    ``inference-api-key`` is consumed by the async processor). The skeleton sends
+    only the tenant header and assumes an auth-exempt gateway, e.g. ``--disable-auth``.
+    """
+    require_batch_target(deployer, tc, test_mode, batch_gateway_mode)
+    cfg = tc.validation.batch_gateway
+    base_url = cfg.endpoint or deployer.get_batch_endpoint(tc.name)
+    c = BatchGatewayClient(
+        base_url=base_url,
+        tenant=cfg.tenant,
+        verify_tls=cfg.verify_tls,
+        timeout=cfg.request_timeout.total_seconds(),
+    )
+    log.info("Batch gateway for '%s' → %s", tc.name, base_url)
     yield c
     c.close()
 

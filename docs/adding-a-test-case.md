@@ -128,6 +128,23 @@ cleanup: true
 | `validation.checkResponses` | Enable OpenAI `/v1/responses` inference check (default: `false`) |
 | `cleanup` | Delete the LLMInferenceService after tests complete |
 
+### Cleanup order for multi-document manifests
+
+`test_99_cleanup` deletes what the manifest applied in dependency-safe order:
+
+1. companion documents that reference the service (MaaS model refs and policies,
+   side stores such as PostgreSQL/SeaweedFS), in reverse manifest order;
+2. the `LLMInferenceService`s;
+3. documents a service depends on through `spec.baseRefs` — for example an
+   `LLMInferenceServiceConfig` — deleted **last**, because KServe rejects their
+   deletion while a service still references them (`DeletionBlocked: ...
+   referenced by 1 LLMInferenceService(s)`) and leaves them Terminating.
+
+`SERVICE_DEPENDENCY_KINDS` in `src/conformance/deployer.py` holds that third
+group. Every delete carries `--timeout`, so a document stuck behind a finalizer
+that cannot clear is reported (and retried at session teardown) instead of
+hanging the phase.
+
 ### Adding metrics checks
 
 Enable metrics validation by adding a `metricsCheck` section under `validation`:
