@@ -1,0 +1,60 @@
+# Batch Gateway conformance case — async dispatch over the PostgreSQL (SQL)
+# transport. Validates one LLMInferenceService plus one LLMBatchGateway CR
+# through phases 40a-40k (see docs/adding-a-batch-test-case.md).
+#
+# The manifest is owned by the llm-d-conformance-manifests repo. Until
+# `batch-gateway-async-sql.yaml` lands on the branch you run with `--setup`,
+# test_01_prereq skips with "manifest not found for this branch" and every
+# later phase (batch included) skips with it.
+name: batch-gateway-async-sql
+description: "LLMInferenceService + LLMBatchGateway, async dispatch with PostgreSQL SQL queues"
+model:
+  name: Qwen/Qwen3-0.6B
+  uri: hf://Qwen/Qwen3-0.6B
+  displayName: qwen3-0.6b-batch-gateway
+  category: single-node-gpu
+  cache:
+    enabled: true
+    storageSize: 10Gi
+    keepPVC: true
+    timeout: 15m
+deployment:
+  manifestPath: batch-gateway-async-sql.yaml
+  # The LLMInferenceService in the manifest requests a GPU on a real cluster, but
+  # the batch gateway components are CPU-only. Keep the GPU gate off so the case
+  # is not hidden behind --need-gpu; --mock strips the GPU request and covers
+  # the full flow (including batch dispatch) on CPU-only CI.
+  requiresGpu: false
+  readyTimeout: 20m
+  resources:
+    cpu: "4"
+    memory: 32Gi
+    rdma: false
+validation:
+  healthEndpoint: /health
+  healthPort: 8000
+  healthScheme: HTTPS
+  inferenceCheck: true
+  testPrompts:
+    - "What is a Kubernetes pod?"
+    - "Name one benefit of batching inference requests."
+  expectedCodes: [200]
+  timeout: 2m
+  retryAttempts: 3
+  retryInterval: 15s
+  metricsCheck:
+    enabled: true
+    checkVLLM: true
+    checkScheduler: true
+  # Phases 40a-40k (upstream batch-gateway e2e ports). `model` and `prompts`
+  # default to model.name / testPrompts
+  # above; only the batch-specific knobs are set here.
+  batchGateway:
+    enabled: true
+    # dispatchUrl pins the async dispatch URL the deployer otherwise derives from
+    # the discovered gateway Service (see docs/adding-a-batch-test-case.md).
+    # dispatchUrl: https://my-gateway.example.com/llm-conformance-test/batch-gateway-async-sql
+    tenant: default
+    completionWindow: 24h
+    expectOutputs: 2
+cleanup: true

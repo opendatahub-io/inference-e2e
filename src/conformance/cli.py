@@ -16,7 +16,8 @@ needs ``--endpoint`` or auto-detect), cache (PVC download only).
 
 Other notable flags: ``--mock`` (simulator; default image
 ``DEFAULT_MOCK_IMAGE``), ``--render-image``, auth/pull-secret, PVC storage,
-P/D node selectors, GuideLLM image, ``--html`` / ``--fail-fast`` / 6h timeout.
+P/D node selectors, GuideLLM image, ``--batch-gateway`` (auto|require),
+``--html`` / ``--fail-fast`` / 6h timeout.
 """
 
 from __future__ import annotations
@@ -73,6 +74,14 @@ def main():
 
     # Benchmark
     parser.add_argument("--guidellm-image", default="", help="GuideLLM benchmark image override")
+
+    # Batch gateway
+    parser.add_argument(
+        "--batch-gateway",
+        default="auto",
+        choices=["auto", "require"],
+        help="Batch phases: auto skips when the platform lacks batch support, require fails with diagnostics",
+    )
 
     # Node placement
     parser.add_argument("--decode-node-selector", default="", help="Node selector for decode pods (key=value)")
@@ -152,6 +161,7 @@ def main():
         "guidellm_image": "--guidellm-image",
         "decode_node_selector": "--decode-node-selector",
         "prefill_node_selector": "--prefill-node-selector",
+        "batch_gateway": "--batch-gateway",
     }
 
     for attr, flag in flag_map.items():

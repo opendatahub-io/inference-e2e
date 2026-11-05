@@ -1,0 +1,7 @@
+name: batch-gateway
+description: "Batch Gateway conformance — LLMInferenceService + LLMBatchGateway, async dispatch over PostgreSQL SQL queues"
+platform: any
+testCases:
+  - batch-gateway-async-sql
+parallel: false
+timeout: 60m

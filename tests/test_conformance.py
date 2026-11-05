@@ -4,7 +4,9 @@ Each test case runs through ordered phases (phases skip when disabled in
 config, when the manifest is missing, or when deploy failed / discover mode):
 
   01. Prerequisites — CRD exists; manifest file present for branch
-  02. Deploy — apply LLMInferenceService manifest (skipped in discover mode)
+  02. Deploy — apply LLMInferenceService manifest (skipped in discover mode;
+      batch testcases also require the platform's batch gateway, see
+      --batch-gateway)
   03. Service — wait for Service creation
   04. Gateway — wait for Gateway to be programmed
   05. Pods — wait for pods to be Running (CrashLoopBackOff early fail)
@@ -23,6 +25,8 @@ config, when the manifest is missing, or when deploy failed / discover mode):
   20. Benchmark — GuideLLM Job; optional warmup; performance thresholds
   21. Metrics (post-benchmark) — re-validate P/D after load
   30a-e. MaaS — governed route checks (tests/maas/phases.py; skip without a MaaSModelRef)
+  40a-k. Batch gateway — files/batches API on the platform's LLMBatchGateway
+         (tests/batch/phases.py; deselected unless validation.batchGateway.enabled)
   99. Cleanup — delete LLMInferenceService (honors --nocleanup / tc.cleanup)
 """
 
@@ -34,6 +38,7 @@ from pathlib import Path
 
 import pytest
 
+from batch.phases import BatchPhases, require_batch_platform
 from conformance.benchmark import run_benchmark
 from conformance.config import TestCase, chat_prompt_to_messages
 from conformance.client import LLMClient
@@ -94,6 +99,21 @@ def _require_gpu(deployer: Deployer, tc: TestCase, mock_mode: bool, test_mode: s
         pytest.skip(f"'{tc.name}' needs {needed} GPU(s) but cluster has {available}")
 
 
+def _require_batch_platform(deployer: Deployer, tc: TestCase, batch_gateway_mode: str) -> None:
+    """Gate phase 02 on the platform's batch support for ``validation.batchGateway`` testcases.
+
+    Runs before ``kubectl apply`` so a cluster without the batch CRD skips with the
+    ``batch_platform_state()`` diagnostic (``--batch-gateway auto``) or fails fast
+    with it (``require``) instead of erroring on "no matches for kind
+    LLMBatchGateway" halfway through the manifest. The manifest's async transport
+    is checked too: an operator whose CRD predates ``asyncConfig.sql`` (3.6-EA2)
+    rejects the manifest with a strict-decoding error. Testcases without batch
+    validation are unaffected.
+    """
+    if tc.validation.batch_gateway.enabled:
+        require_batch_platform(deployer, batch_gateway_mode, tc.validation.batch_gateway.transport)
+
+
 def _metric(flag: str):
     """Phase applies when metrics checks are enabled and ``flag`` is set on ``metricsCheck``."""
     return lambda tc: tc.validation.metrics_check.enabled and getattr(tc.validation.metrics_check, flag)
@@ -137,7 +157,9 @@ class LLMDPhases:
                 )
             assert False, f"CRD {LLMISVC_CRD} not found"
 
-    def test_02_deploy(self, deployer: Deployer, tc: TestCase, test_mode: str, mock_mode: bool):
+    def test_02_deploy(
+        self, deployer: Deployer, tc: TestCase, test_mode: str, mock_mode: bool, batch_gateway_mode: str
+    ):
         """Deploy the LLMInferenceService manifest."""
         if test_mode == "discover":
             pytest.skip("discover mode — skipping deploy")
@@ -145,6 +167,7 @@ class LLMDPhases:
         _require_gpu(deployer, tc, mock_mode, test_mode)
         if not deployer.check_crd_exists(LLMISVC_CRD):
             pytest.skip(f"CRD {LLMISVC_CRD} not found — cannot deploy")
+        _require_batch_platform(deployer, tc, batch_gateway_mode)
         _log(f"Deploying {tc.deployment.manifest_path} as '{tc.name}'")
         result = deployer.deploy(tc)
         _log(f"Deploy {'succeeded' if result.success else 'FAILED'} in {result.duration:.1f}s")
@@ -612,9 +635,10 @@ class CleanupPhase:
         _log("Cleanup complete")
 
 
-class TestConformance(CleanupPhase, MaaSPhases, LLMDPhases):
+class TestConformance(CleanupPhase, BatchPhases, MaaSPhases, LLMDPhases):
     """Every phase for each test case.
 
     pytest collects inherited test methods in reverse-MRO order, so the phase
-    groups run llm-d (01–21), then MaaS (30a–30e), then cleanup (99).
+    groups run llm-d (01–21), then MaaS (30a–30e), then batch gateway (40a–40c),
+    then cleanup (99).
     """

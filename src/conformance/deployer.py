@@ -8,7 +8,8 @@ Deploy / patch:
   - Apply with retry for transient webhook / CRD-not-found errors
   - Manifest patching: model URI (hf→pvc), mock simulator image, LoRA
     adapters, pull secrets, ``--disable-auth``, env overrides, network
-    attach, P/D node selectors, render sidecar, suite ownership label
+    attach, P/D node selectors, render sidecar, suite ownership label,
+    ``LLMBatchGateway`` async dispatch URL (derived from the gateway Service)
   - Pull-secret propagation from operator namespaces; gateway
     ``allowedRoutes`` so the test namespace is accepted
   - EPP metrics RBAC (``ClusterRoleBinding``) for authenticated scrape
@@ -21,6 +22,7 @@ Wait / diagnose:
 Endpoints:
   - Gateway PF → inference (``get_endpoint``)
   - Direct pod PF → health / models (``get_pod_endpoint``)
+  - Batch API-server PF → files / batches (``get_batch_endpoint``)
 """
 
 from __future__ import annotations
@@ -38,6 +40,7 @@ from uuid import uuid4
 
 import yaml
 
+from conformance.batch import BATCH_GATEWAY_KIND, dispatch_target, patch_batch_dispatch
 from conformance.config import (
     TestCase,
     apply_manifest_model_config,
@@ -50,6 +53,24 @@ log = logging.getLogger(__name__)
 
 WORKLOAD_LABEL = "app.kubernetes.io/name={name},app.kubernetes.io/component=llminferenceservice-workload"
 PREFILL_LABEL = "app.kubernetes.io/name={name},app.kubernetes.io/component=llminferenceservice-workload-prefill"
+
+# Gateway Service discovery: Gateway API implementations label the Service they
+# generate, so the name does not have to be hardcoded per platform.
+GATEWAY_SERVICE_LABEL = "gateway.networking.k8s.io/gateway-name"
+DEFAULT_GATEWAY_SERVICE = "svc/inference-gateway-istio"
+DEFAULT_GATEWAY_NAMESPACE = "redhat-ods-applications"
+# KServe names the Gateway it attaches LLMInferenceService routes to in the
+# inferenceservice-config ConfigMap's ingress.kserveIngressGateway ("ns/name").
+KSERVE_INGRESS_CONFIG_MAP = "inferenceservice-config"
+KSERVE_INGRESS_CONFIG_KEYS = ("kserveIngressGateway", "ingressGateway")
+KSERVE_INGRESS_CONFIG_NAMESPACES = ("redhat-ods-applications", "opendatahub")
+
+
+def _is_cluster_internal(address: str) -> bool:
+    """True for in-cluster DNS names, which the test runner cannot resolve."""
+    host = address.split("//")[-1].split("/")[0]
+    return host.endswith(".local") or ".svc." in host
+
 
 # Marks LLMInferenceServices this suite deployed, so the start-of-run sweep never
 # touches services it does not own.
@@ -95,6 +116,7 @@ class Deployer:
         decode_node_selector: str = "",
         prefill_node_selector: str = "",
         model_override: str = "",
+        apply_timeout: float = 300,
     ):
         self.kubeconfig = kubeconfig
         self.platform = platform
@@ -108,11 +130,19 @@ class Deployer:
         self.decode_node_selector = _parse_node_selector(decode_node_selector)
         self.prefill_node_selector = _parse_node_selector(prefill_node_selector)
         self.model_override = model_override
+        # Post-upgrade clusters keep admission webhooks unservable for minutes
+        # (odh-model-controller took ~3 min after a 3.6 operator swap), so the
+        # transient-apply retry budget is generous and overridable.
+        self.apply_timeout = apply_timeout
         self._port_forward_proc: subprocess.Popen | None = None
         self._port_forward_port: int = 0
+        self._port_forward_scheme: str = "http"
         self._pod_pf_proc: subprocess.Popen | None = None
         self._pod_pf_port: int = 0
         self._pod_pf_name: str = ""
+        self._batch_pf_proc: subprocess.Popen | None = None
+        self._batch_pf_port: int = 0
+        self._batch_pf_name: str = ""
         self._deployed: set[str] = set()
         self._applied: dict[str, TestCase] = {}
         self._render_image_cached: str | None = None
@@ -630,7 +660,7 @@ class Deployer:
                 with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml") as f:
                     yaml.dump_all(docs, f)
                     f.flush()
-                    self._apply_with_webhook_retry(f.name, namespace=namespace)
+                    self._apply_with_webhook_retry(f.name, timeout=self.apply_timeout, namespace=namespace)
             for name in service_names:
                 self.ensure_metrics_rbac(name)
             result.success = True
@@ -955,6 +985,15 @@ class Deployer:
         raise TimeoutError(f"InferencePool for {name} not found after {timeout}s")
 
     def get_endpoint(self, name: str) -> str:
+        """Local URL for inference through the gateway.
+
+        Prefers the LLMInferenceService's ``status.url`` path and always tries a
+        port-forward first, because the address is only routable inside the
+        cluster. When the CR has no ``status.url`` (not Ready yet, e.g. a gateway
+        precondition failure) the gateway address is used as the path prefix, and
+        a cluster-internal address without a reachable gateway Service is an
+        explicit error instead of an unresolvable URL handed to the HTTP client.
+        """
         try:
             url = self.kubectl(
                 "get",
@@ -975,37 +1014,192 @@ class Deployer:
         except RuntimeError:
             pass
         gateway_addr = self.wait_for_gateway()
-        return f"http://{gateway_addr}/{self.namespace}/{name}"
+        path_suffix = f"/{self.namespace}/{name}"
+        gateway_svc, gateway_ns, gateway_port = self._gateway_service()
+        local_url = self._ensure_port_forward(path_suffix, gateway_svc, gateway_ns, gateway_port)
+        if local_url:
+            return local_url
+        if _is_cluster_internal(gateway_addr):
+            raise RuntimeError(
+                f"llminferenceservice/{name} has no status.url and the only gateway address is cluster-internal "
+                f"({gateway_addr}); no gateway Service port-forward could be started, so the endpoint is not "
+                "reachable from the test runner. Check the LLMInferenceService Ready condition."
+            )
+        return f"http://{gateway_addr}{path_suffix}"
+
+    def _gateway_service(self) -> tuple[str, str, int]:
+        """``(service, namespace, port)`` to port-forward for gateway traffic.
+
+        RHOAI 3.6 with the AIGateway component exposes the gateway as
+        ``data-science-gateway-<class>`` in ``openshift-ingress`` with only
+        ``443``/``15021`` — there is no port 80 — so the port has to be
+        discovered rather than assumed.
+        """
+        """``(service, namespace)`` to port-forward for gateway traffic.
+
+        The gateway Service name differs per platform (Istio's
+        ``inference-gateway-istio`` in ``redhat-ods-applications`` on some
+        installs, ``data-science-gateway`` in ``openshift-ingress`` on RHOAI 3.6
+        with the AIGateway component), so discover it via the Gateway API label
+        before falling back to the historical default.
+        """
+        try:
+            output = self.kubectl(
+                "get",
+                "svc",
+                "-A",
+                "-l",
+                GATEWAY_SERVICE_LABEL,
+                "-o",
+                'jsonpath={range .items[*]}{.metadata.name}/{.metadata.namespace}{"\\n"}{end}',
+                check=False,
+            )
+        except RuntimeError:
+            output = ""
+        for line in output.splitlines():
+            line = line.strip()
+            if "/" in line:
+                service, namespace = line.split("/", 1)
+                log.info("Discovered gateway Service %s/%s", namespace, service)
+                return f"svc/{service}", namespace, self._gateway_service_port(service, namespace)
+        return DEFAULT_GATEWAY_SERVICE, DEFAULT_GATEWAY_NAMESPACE, 80
+
+    def _gateway_service_port(self, service: str, namespace: str) -> int:
+        """Prefer port 80, else 443 (HTTPS-only gateways), else 15021 as a last resort."""
+        try:
+            ports = self.kubectl(
+                "get",
+                "svc",
+                service,
+                "-n",
+                namespace,
+                "-o",
+                "jsonpath={range .spec.ports[*]}{.port} {end}",
+                check=False,
+            )
+        except RuntimeError:
+            return 80
+        available = [int(p) for p in ports.split() if p.isdigit()]
+        for candidate in (80, 443, 15021):
+            if candidate in available:
+                return candidate
+        return available[0] if available else 80
+
+    def _dispatch_gateway_service(self) -> tuple[str, str, int]:
+        """``(service, namespace, port)`` the async processor's dispatch should target.
+
+        Prefers the Gateway KServe attaches this suite's LLMInferenceService routes
+        to (``inferenceservice-config``'s ``ingress.kserveIngressGateway``): a
+        platform can run more than one Gateway, and the first gateway-labelled
+        Service is not necessarily the one carrying the model's route. RHOAI
+        3.6-EA2 ships both ``data-science-gateway`` (the AIGateway component, TLS
+        on 443 behind an OAuth proxy) and the KServe-managed
+        ``openshift-ai-inference`` (plain HTTP on 80) — dispatching to the former
+        answers 302 to OpenShift OAuth instead of reaching the model.
+        """
+        configured = self._kserve_ingress_gateway()
+        if configured:
+            gateway_name, gateway_namespace = configured
+            service = self._gateway_service_named(gateway_name, gateway_namespace)
+            if service:
+                return service
+        return self._gateway_service()
+
+    def _kserve_ingress_gateway(self) -> tuple[str, str] | None:
+        """``(name, namespace)`` of the Gateway KServe routes LLMInferenceServices to."""
+        for namespace in KSERVE_INGRESS_CONFIG_NAMESPACES:
+            try:
+                raw = self.kubectl(
+                    "get",
+                    "cm",
+                    KSERVE_INGRESS_CONFIG_MAP,
+                    "-n",
+                    namespace,
+                    "-o",
+                    "jsonpath={.data.ingress}",
+                    check=False,
+                )
+            except RuntimeError:
+                continue
+            if not raw or not raw.strip():
+                continue
+            try:
+                ingress = json.loads(raw)
+            except json.JSONDecodeError:
+                continue
+            if not isinstance(ingress, dict):
+                continue
+            for key in KSERVE_INGRESS_CONFIG_KEYS:
+                ref = str(ingress.get(key) or "").strip()
+                if "/" not in ref:
+                    continue
+                ref_namespace, name = ref.split("/", 1)
+                log.info("KServe routes LLMInferenceServices to Gateway %s/%s", ref_namespace, name)
+                return name, ref_namespace
+        return None
+
+    def _gateway_service_named(self, gateway_name: str, gateway_namespace: str) -> tuple[str, str, int] | None:
+        """``(service, namespace, port)`` of a Gateway's Service, or ``None`` when absent."""
+        try:
+            service = self.kubectl(
+                "get",
+                "svc",
+                "-n",
+                gateway_namespace,
+                "-l",
+                f"{GATEWAY_SERVICE_LABEL}={gateway_name}",
+                "-o",
+                "jsonpath={.items[0].metadata.name}",
+                check=False,
+            ).strip()
+        except RuntimeError:
+            return None
+        if not service:
+            return None
+        return f"svc/{service}", gateway_namespace, self._gateway_service_port(service, gateway_namespace)
 
     def _find_free_port(self) -> int:
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
             s.bind(("", 0))
             return s.getsockname()[1]
 
-    def _ensure_port_forward(self, path: str) -> str | None:
+    def _ensure_port_forward(
+        self,
+        path: str,
+        gateway_svc: str = DEFAULT_GATEWAY_SERVICE,
+        gateway_ns: str = DEFAULT_GATEWAY_NAMESPACE,
+        remote_port: int = 80,
+    ) -> str | None:
+        scheme = "https" if remote_port in (443, 15021) else "http"
         if self._port_forward_proc and self._port_forward_proc.poll() is None:
-            return f"http://localhost:{self._port_forward_port}{path}"
+            return f"{self._port_forward_scheme}://localhost:{self._port_forward_port}{path}"
 
         local_port = self._find_free_port()
-        gateway_svc = "svc/inference-gateway-istio"
-        gateway_ns = "redhat-ods-applications"
 
         cmd = ["kubectl"]
         if self.kubeconfig:
             cmd += ["--kubeconfig", self.kubeconfig]
-        cmd += ["port-forward", "-n", gateway_ns, gateway_svc, f"{local_port}:80"]
+        cmd += ["port-forward", "-n", gateway_ns, gateway_svc, f"{local_port}:{remote_port}"]
 
-        log.info("Starting port-forward: localhost:%d → %s:80", local_port, gateway_svc)
+        self._port_forward_scheme = scheme
+        log.info(
+            "Starting port-forward: localhost:%d → %s/%s:%d (%s)",
+            local_port,
+            gateway_ns,
+            gateway_svc,
+            remote_port,
+            scheme,
+        )
         self._port_forward_proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         self._port_forward_port = local_port
 
         time.sleep(3)
         if self._port_forward_proc.poll() is not None:
-            log.warning("Port-forward failed to start")
+            log.warning("Port-forward to %s/%s failed to start", gateway_ns, gateway_svc)
             self._port_forward_proc = None
             return None
 
-        return f"http://localhost:{local_port}{path}"
+        return f"{scheme}://localhost:{local_port}{path}"
 
     def get_pod_endpoint(self, name: str) -> str:
         """Port-forward directly to a workload pod, bypassing the gateway/EPP."""
@@ -1055,12 +1249,81 @@ class Deployer:
             self._pod_pf_port = 0
             self._pod_pf_name = ""
 
+    def get_batch_endpoint(self, name: str) -> str:
+        """Local endpoint for an ``LLMBatchGateway`` CR's API server.
+
+        The operator renders ``svc/<name>-apiserver`` in the test namespace, so
+        prefer a port-forward to it (tracked separately from the gateway and pod
+        forwards and stopped at session teardown). ``name`` is the CR name — for
+        the smoke skeleton that is the testcase name. When the forward cannot
+        start, fall back to the gateway path so the failure names a real address.
+        The scheme follows ``spec.tls``: TLS-terminated API servers use https.
+        """
+        service = f"{name}-apiserver"
+        if self._batch_pf_proc and self._batch_pf_proc.poll() is None:
+            if self._batch_pf_name == name:
+                return f"{self._batch_api_scheme(name)}://localhost:{self._batch_pf_port}"
+            self._stop_batch_port_forward()
+
+        scheme = self._batch_api_scheme(name)
+        local_port = self._find_free_port()
+        cmd = ["kubectl"]
+        if self.kubeconfig:
+            cmd += ["--kubeconfig", self.kubeconfig]
+        cmd += ["port-forward", "-n", self.namespace, f"svc/{service}", f"{local_port}:8000"]
+
+        log.info("Starting batch-gateway port-forward: localhost:%d → %s:8000", local_port, service)
+        self._batch_pf_proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        self._batch_pf_port = local_port
+        self._batch_pf_name = name
+
+        time.sleep(3)
+        if self._batch_pf_proc.poll() is not None:
+            log.warning("Batch-gateway port-forward to %s failed to start", service)
+            self._batch_pf_proc = None
+            self._batch_pf_port = 0
+            self._batch_pf_name = ""
+            gateway_addr = self.wait_for_gateway()
+            return f"http://{gateway_addr}/{self.namespace}/{service}"
+
+        return f"{scheme}://localhost:{local_port}"
+
+    def _batch_api_scheme(self, name: str) -> str:
+        """Batch API server scheme from the CR's ``spec.tls.enabled`` (https when true).
+
+        A ``spec.tls`` block alone is not enough: it carries ``certManager``
+        settings that are valid with TLS disabled, so read the flag itself.
+        """
+        try:
+            enabled = self.kubectl(
+                "get",
+                "llmbatchgateway",
+                name,
+                "-n",
+                self.namespace,
+                "-o",
+                "jsonpath={.spec.tls.enabled}",
+                check=False,
+            )
+        except Exception:
+            return "http"
+        return "https" if enabled.strip().lower() == "true" else "http"
+
+    def _stop_batch_port_forward(self):
+        if self._batch_pf_proc:
+            self._batch_pf_proc.terminate()
+            self._batch_pf_proc.wait(timeout=5)
+            self._batch_pf_proc = None
+            self._batch_pf_port = 0
+            self._batch_pf_name = ""
+
     def stop_port_forward(self):
         if self._port_forward_proc:
             self._port_forward_proc.terminate()
             self._port_forward_proc.wait(timeout=5)
             self._port_forward_proc = None
         self._stop_pod_port_forward()
+        self._stop_batch_port_forward()
         log.info("Port-forwards stopped")
 
     def cleanup(self, tc: TestCase, timeout: float = 120):
@@ -1193,8 +1456,41 @@ class Deployer:
                         else:
                             env_list.append(entry)
 
+        self._patch_batch_dispatch(manifest_docs, tc)
         patch_maas_refs(manifest_docs, primary_name, tc.name, self.namespace)
         return manifest_docs
+
+    def _patch_batch_dispatch(self, documents: list, tc: TestCase) -> None:
+        """Point an ``LLMBatchGateway``'s async dispatch at this cluster's gateway.
+
+        The dispatch URL is the one manifest field that does not port across
+        platforms: Istio serves plain HTTP on 80, RHOAI 3.6's AIGateway only TLS
+        on 443, and a URL with the wrong host or port leaves batches
+        ``in_progress`` forever. So it is derived from the gateway Service
+        discovered for this run instead of trusted from the manifest.
+
+        ``validation.batchGateway.dispatchUrl`` supplies the URL verbatim, for a
+        cluster whose routing is not reachable at the derived address (the TLS
+        settings then stay exactly as the manifest declares them).
+
+        Manifests without an ``LLMBatchGateway`` cost nothing here: gateway
+        discovery is skipped, so non-batch test cases make no extra kubectl call.
+        """
+        if not any(isinstance(doc, dict) and doc.get("kind") == BATCH_GATEWAY_KIND for doc in documents):
+            return
+        override = tc.validation.batch_gateway.dispatch_url.strip()
+        if override:
+            url, insecure_tls = override, False
+        else:
+            gateway_service, gateway_namespace, gateway_port = self._dispatch_gateway_service()
+            url, insecure_tls = dispatch_target(
+                gateway_service, gateway_namespace, gateway_port, self.namespace, tc.name
+            )
+        rewritten = patch_batch_dispatch(documents, url=url, insecure_tls=insecure_tls)
+        if rewritten:
+            log.info("Batch dispatch → %s (rewrote %s)", url, ", ".join(rewritten))
+        else:
+            log.warning("LLMBatchGateway has no asyncConfig dispatch URL to rewrite; leaving the manifest as-is")
 
     @staticmethod
     def _pod_templates(spec: dict) -> list[dict]:

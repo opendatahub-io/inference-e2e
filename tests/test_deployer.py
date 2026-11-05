@@ -430,7 +430,7 @@ spec: {}
             deleted_services.append(args[2])
         return ""
 
-    def failing_apply(path, namespace=""):
+    def failing_apply(path, timeout=None, namespace=""):
         raise RuntimeError("admission webhook denied service-b")
 
     monkeypatch.setattr(deployer, "kubectl", fake_kubectl)
@@ -1990,3 +1990,78 @@ def test_new_testcase_script_rejects_duplicate(tmp_path, monkeypatch):
     result = subprocess.run([str(script), "dupe-test"], capture_output=True, text=True)
     assert result.returncode != 0
     assert "already exists" in result.stdout or "already exists" in result.stderr
+
+
+def test_get_endpoint_never_returns_a_cluster_internal_url(monkeypatch):
+    """A CR without status.url plus a cluster-internal gateway address must fail loudly.
+
+    Regression: the fallback returned ``http://data-science-gateway…svc.cluster.local/ns/name``
+    straight to the HTTP client, which surfaced as ``httpx.ConnectError: No address
+    associated with hostname`` instead of naming the real problem.
+    """
+    from conformance.deployer import Deployer
+
+    deployer = Deployer()
+    monkeypatch.setattr(
+        deployer,
+        "kubectl",
+        lambda *args, **kwargs: "" if args[:2] == ("get", "llminferenceservice") else "",
+    )
+    monkeypatch.setattr(deployer, "wait_for_gateway", lambda *a, **k: "gw.openshift-ingress.svc.cluster.local")
+    monkeypatch.setattr(deployer, "_gateway_service", lambda: ("svc/data-science-gateway", "openshift-ingress", 443))
+    monkeypatch.setattr(deployer, "_ensure_port_forward", lambda path, *a, **k: None)
+
+    with pytest.raises(RuntimeError, match="cluster-internal"):
+        deployer.get_endpoint("missing-url")
+
+
+def test_get_endpoint_prefers_a_port_forward_and_discovers_the_gateway_service(monkeypatch):
+    from conformance.deployer import Deployer
+
+    deployer = Deployer()
+    seen: dict = {}
+
+    def fake_kubectl(*args, **kwargs):
+        if args[0] == "get" and args[1] == "llminferenceservice":
+            return ""  # not Ready yet: no status.url
+        if args[0] == "get" and args[1] == "svc" and args[2] == "-A":
+            return "data-science-gateway/openshift-ingress\n"
+        if args[0] == "get" and args[1] == "svc":
+            return "443 "  # HTTPS-only gateway: no port 80 on this platform
+        return ""
+
+    def fake_pf(path, service="", namespace="", remote_port=80):
+        seen["target"] = (service, namespace, remote_port, path)
+        scheme = "https" if remote_port in (443, 15021) else "http"
+        return f"{scheme}://localhost:9000{path}"
+
+    monkeypatch.setattr(deployer, "kubectl", fake_kubectl)
+    monkeypatch.setattr(deployer, "wait_for_gateway", lambda *a, **k: "gw.example.com")
+    monkeypatch.setattr(deployer, "_ensure_port_forward", fake_pf)
+
+    url = deployer.get_endpoint("case-name")
+
+    assert url == "https://localhost:9000/llm-conformance-test/case-name", "443 must be forwarded as https"
+    assert seen["target"] == (
+        "svc/data-science-gateway",
+        "openshift-ingress",
+        443,
+        "/llm-conformance-test/case-name",
+    )
+
+
+def test_gateway_service_port_prefers_80_then_443_then_15021(monkeypatch):
+    """The RHOAI 3.6 gateway has no port 80, so the forwarded port must be discovered."""
+    from conformance.deployer import Deployer
+
+    deployer = Deployer()
+    cases = [
+        ("80 443 15021", 80),
+        ("443 15021", 443),  # HTTPS-only gateway (data-science-gateway on 3.6)
+        ("15021", 15021),
+        ("8080 9443", 8080),  # unknown layout: take the first offered port
+        ("", 80),  # unreadable: fall back to the historical default
+    ]
+    for ports, expected in cases:
+        monkeypatch.setattr(deployer, "kubectl", lambda *a, **k: ports)
+        assert deployer._gateway_service_port("svc", "ns") == expected, ports

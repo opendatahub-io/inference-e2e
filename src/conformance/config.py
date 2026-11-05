@@ -11,7 +11,8 @@ Hierarchy (``configs/testcases/*.yaml`` → ``TestCase``):
     prefill, worker, networkAttach, envOverrides, readyTimeout
     (replica and GPU counts come from the manifest, not here)
   - ``validation`` — health, prompts / chatPrompts, metricsCheck flags
-    (vLLM, cache, P/D, scheduler, flow control, NIXL, LoRA), benchmark
+    (vLLM, cache, P/D, scheduler, flow control, NIXL, LoRA), benchmark,
+    MaaS, batchGateway
   - ``cleanup`` — whether phase 99 deletes resources
 
 Profiles (``configs/profiles/*.yaml`` → ``TestProfile``) list test case
@@ -101,6 +102,36 @@ class MetricsCheck:
 class MaaSCheck:
     # Override the MaaSModelRef endpoint scheme, e.g. "http" where port 443 is blocked (AKS NSG).
     endpoint_scheme: str = ""
+
+
+@dataclass
+class BatchGatewayCheck:
+    """Batch-gateway (OpenAI files/batches) validation, disabled by default.
+
+    ``endpoint`` overrides the derived API-server URL; ``dispatch_url`` overrides
+    the manifest's async dispatch URL, which the deployer otherwise derives from
+    the discovered gateway Service; ``transport`` names the async queue transport
+    the manifest declares and is checked against the installed CRD (``sql`` today,
+    which older operators reject); ``prompts`` falls back to the suite's
+    ``testPrompts`` when empty; ``expect_outputs=0`` means len(prompts).
+    ``concurrency=0`` deselects phase 40k; ``cancel_requests`` sizes the batch
+    phase 40i cancels immediately after submitting.
+    """
+
+    enabled: bool = False
+    endpoint: str = ""
+    dispatch_url: str = ""
+    transport: str = "sql"
+    tenant: str = "default"
+    request_timeout: timedelta = field(default_factory=lambda: timedelta(minutes=10))
+    poll_interval: timedelta = field(default_factory=lambda: timedelta(seconds=15))
+    completion_window: str = "24h"
+    model: str = ""
+    prompts: list[str] = field(default_factory=list)
+    expect_outputs: int = 0
+    verify_tls: bool = True
+    concurrency: int = 3
+    cancel_requests: int = 8
 
 
 @dataclass
@@ -210,6 +241,7 @@ class ValidateConfig:
     multi_pool: MultiPoolCheck | None = None
     benchmark: BenchmarkConfig = field(default_factory=BenchmarkConfig)
     maas: MaaSCheck = field(default_factory=MaaSCheck)
+    batch_gateway: BatchGatewayCheck = field(default_factory=BatchGatewayCheck)
 
 
 @dataclass
@@ -250,7 +282,13 @@ def _build(cls, data: dict | None):
         if snake_key not in hints:
             continue
         hint = hints[snake_key]
-        if snake_key in ("timeout", "ready_timeout", "retry_interval") and isinstance(val, str):
+        if snake_key in (
+            "timeout",
+            "ready_timeout",
+            "retry_interval",
+            "request_timeout",
+            "poll_interval",
+        ) and isinstance(val, str):
             kwargs[snake_key] = parse_duration(val)
         elif hint == "CacheConfig" or (isinstance(hint, str) and "CacheConfig" in str(hint)):
             kwargs[snake_key] = _build(CacheConfig, val) if val else CacheConfig()
@@ -278,6 +316,8 @@ def _build(cls, data: dict | None):
             kwargs[snake_key] = _build(ValidateConfig, val) if val else ValidateConfig()
         elif "MaaSCheck" in str(hint):
             kwargs[snake_key] = _build(MaaSCheck, val) if val else MaaSCheck()
+        elif "BatchGatewayCheck" in str(hint):
+            kwargs[snake_key] = _build(BatchGatewayCheck, val) if val else BatchGatewayCheck()
         else:
             kwargs[snake_key] = val
     return cls(**kwargs)

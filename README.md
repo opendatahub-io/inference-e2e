@@ -2,7 +2,7 @@
 
 End-to-end conformance tests for [llm-d](https://github.com/llm-d) / KServe `LLMInferenceService` deployments on Kubernetes.
 
-**Guides:** [Adding a Test Case](docs/adding-a-test-case.md)
+**Guides:** [Adding a Test Case](docs/adding-a-test-case.md) · [Adding a Batch Gateway Test Case](docs/adding-a-batch-test-case.md)
 
 ## Prerequisites
 
@@ -255,6 +255,7 @@ docker run --rm ghcr.io/opendatahub-io/llm-d-e2e --setup 3.5-GA
 | kv-offloading-tiered | 1 | KV cache offloading to CPU + filesystem tiers |
 | pd-performance | 16 | P/D benchmark with GuideLLM (4 prefill + 2 decode, NIXL, RDMA) |
 | maas-single-gpu | 1 | single-gpu served through MaaS: auth, API key, token rate limit (needs the MaaS stack) |
+| batch-gateway-async-sql | 1 | LLMInferenceService + LLMBatchGateway, async dispatch with PostgreSQL SQL queues (needs the batch gateway platform) |
 
 ## Test Phases
 
@@ -271,7 +272,8 @@ Each test case runs through ordered phases:
 9. **Inference** — POST /v1/chat/completions
 10. **Metrics** — scrape and validate Prometheus metrics
 11. **MaaS** — for manifests with a `MaaSModelRef`: unauthenticated 401, API key, authenticated inference, rate limit
-12. **Cleanup** — delete resources
+12. **Batch Gateway** — for test cases with `validation.batchGateway.enabled`: `LLMBatchGateway` Ready, files/batches API contract (validation, ingestion rejections, partial results, reuse, cancel, tenant isolation, concurrency), async batch to `completed`
+13. **Cleanup** — delete resources
 
 If deploy fails (e.g., manifest missing for the selected branch), all subsequent phases for that test case are automatically skipped. CrashLoopBackOff is detected within ~45 seconds instead of waiting the full timeout.
 
@@ -363,6 +365,28 @@ minikube tunnel   # keep running: gateways are LoadBalancer Services, and MaaS p
 ```
 
 Disk covers the platform images and the Postgres PVC; the manifest's `hf://` model URI is kept in mock mode, so the node also needs internet access to Hugging Face. This sizing is derived from AKS measurements and has not been validated on minikube.
+
+## Batch Gateway Tests
+
+`batch-gateway-async-sql` deploys an `LLMInferenceService` together with an `LLMBatchGateway` CR and, after the standard llm-d phases, validates the OpenAI Batch API: `LLMBatchGateway` Ready, files upload/download/delete round-trip, and an asynchronous batch (PostgreSQL SQL queues, no Redis) that reaches `completed` with the expected request count and output lines. The manifest (model, Postgres, S3-compatible storage, `batch-gateway-secrets`, `LLMBatchGateway`) lives in the manifests repo; the batch phases are deselected for every other test case, and the case skips until that manifest lands on the branch you pulled.
+
+At deploy time the suite rewrites the gateway route the async processor dispatches to — `spec.processor.asyncConfig.inferenceGateway.url` and every `spec.processor.asyncConfig.sql.queuesConfig[].igwBaseURL` — from the gateway Service it discovers; the route must be cluster-internal, because the processor cannot reach the runner's port-forward. One manifest then works on every platform: `http://<svc>.<ns>.svc.cluster.local:80/<test-ns>/<llmisvc>` on Istio, and `https://…:443` plus `tls.insecureSkipVerify: true` on RHOAI 3.6's TLS-only AIGateway. Set `validation.batchGateway.dispatchUrl` in the test case YAML to use a URL verbatim instead; discovery is then skipped and the manifest's own TLS block is left untouched.
+
+Prerequisites and the complete example manifest: [Adding a Batch Gateway Test Case](docs/adding-a-batch-test-case.md). In short, the platform must enable the batch gateway component:
+
+```bash
+kubectl patch datasciencecluster default-dsc --type=merge -p '{"spec":{"components":{"aigateway":{"managementState":"Managed","batchGateway":{"managementState":"Managed"}}}}}'
+```
+
+The `--batch-gateway` flag controls behaviour when the platform lacks batch support: `auto` (default) skips the batch test case at deploy (phase 02, before the manifest is applied) with a diagnostic showing the CRD, operator and `DataScienceCluster` state, while `require` fails with that same diagnostic. Only test cases with `validation.batchGateway.enabled` probe the platform. The flag does not install anything — the CRD, operator and dependencies come from the platform or the test case manifest.
+
+```bash
+# Default: skip the batch test case when the platform has no batch gateway
+uv run llm-d-e2e -p configs/profiles/batch-gateway.yaml --mock --disable-auth -v
+
+# Fail instead of skipping when batch support is missing
+uv run llm-d-e2e -p configs/profiles/batch-gateway.yaml --batch-gateway require -v
+```
 
 ## Development
 

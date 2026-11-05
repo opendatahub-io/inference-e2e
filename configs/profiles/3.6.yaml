@@ -12,5 +12,6 @@ testCases:
   - kv-offloading-cpu
   - kv-offloading-tiered
   - agentic-serving
+  - batch-gateway-async-sql
 parallel: false
 timeout: 180m
