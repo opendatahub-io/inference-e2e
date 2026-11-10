@@ -6,6 +6,15 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 End-to-end conformance test suite for [llm-d](https://github.com/llm-d) / KServe `LLMInferenceService` deployments on Kubernetes. Python + pytest framework that deploys LLMInferenceService resources and validates them through ordered phases (CRD check, deploy, service/gateway/pod readiness, health, inference, metrics, cleanup).
 
+## Docs — read these first
+
+- `docs/quick-start.md` — running the suite (prerequisites, run modes, mock mode, container)
+- `docs/test-cases.md` — what every test case deploys and verifies, with a generated summary table
+- `docs/developing.md` — contributor workflows: adding test cases, phases, config fields, CLI flags, metrics validators
+- `docs/troubleshooting.md` — symptom-first failure guide
+
+This file is the code-level architecture map. Contributor how-to content lives in `docs/developing.md` — do not duplicate it here.
+
 ## Prerequisites
 
 - Python 3.11+, [uv](https://docs.astral.sh/uv/) package manager
@@ -28,7 +37,6 @@ uv run llm-d-e2e -t single-gpu-smoke                  # run single conformance t
 uv run llm-d-e2e -t single-gpu,cache-aware            # run multiple test cases
 uv run llm-d-e2e -t single-gpu --mock                 # simulate vLLM (no GPU)
 uv run llm-d-e2e -t single-gpu --mode discover --endpoint http://svc:8000  # validate existing deployment
-uv run llm-d-e2e -t single-gpu --mode cache           # pre-cache model into PVC then exit
 uv run llm-d-e2e -p configs/profiles/smoke.yaml       # run a profile
 uv run llm-d-e2e -p configs/profiles/3.5.yaml         # run version-specific conformance profile
 uv run llm-d-e2e -t single-gpu --nocleanup            # keep resources after test
@@ -58,39 +66,12 @@ Makefile targets mirror CLI: `make test TESTCASE=single-gpu`, `make unittest`, `
 The `--mode` flag controls which phases execute:
 - **`deploy`** (default) — full lifecycle: deploy → validate → cleanup.
 - **`discover`** — skip deploy/cleanup, validate an existing deployment (requires `--endpoint` or auto-detected). Phases call `_require_deployed()` which returns early in discover mode. Pod and readiness phases check the testcase-named primary service plus only those secondary manifest services that exist in the cluster (`Deployer.existing_service_names()`).
-- **`cache`** — run only the model download phase (create PVC + download Job), then exit.
 
 ### Ordered conformance phases
 
-`test_conformance.py:TestConformance` composes three phase groups: `LLMDPhases` (01–21, in `test_conformance.py`), `MaaSPhases` (30a–30e, in `tests/maas/phases.py`), and `CleanupPhase` (99). pytest collects inherited test methods in reverse-MRO order, so `class TestConformance(CleanupPhase, MaaSPhases, LLMDPhases)` runs the groups in that order for each test case; within a group, methods run in definition order:
+`test_conformance.py:TestConformance` composes three phase groups: `LLMDPhases` (01–21, in `test_conformance.py`), `MaaSPhases` (30a–30e, in `tests/maas/phases.py`), and `CleanupPhase` (99). pytest collects inherited test methods in reverse-MRO order, so `class TestConformance(CleanupPhase, MaaSPhases, LLMDPhases)` runs the groups in that order for each test case; within a group, methods run in definition order.
 
-| Phase | Method | What it validates |
-|-------|--------|-------------------|
-| 01 | `test_01_prereq` | CRD exists, manifest present |
-| 02 | `test_02_deploy` | Apply LLMInferenceService manifest |
-| 03 | `test_03_service` | Service creation |
-| 04 | `test_04_gateway` | The service's Gateway (HTTPRoute `parentRef`) programmed with address |
-| 05 | `test_05_pods` | Pods running without crashes |
-| 06 | `test_06_ready` | LLMInferenceService Ready=True |
-| 07 | `test_07_health` | GET /health (direct pod, bypasses EPP) |
-| 08 | `test_08_models` | GET /v1/models (direct pod, + LoRA adapters if configured) |
-| 09a | `test_09a_inference` | Chat completions + completions (+ LoRA adapter inference) |
-| 09b | `test_09b_messages_responses` | Anthropic /v1/messages + OpenAI /v1/responses |
-| 09c | `test_09c_tool_calling` | Tool-calling: chatPrompts with tools, validates tool_calls response |
-| 10 | `test_10_metrics_vllm` | Basic vLLM request success metrics |
-| 11 | `test_11_metrics_cache` | Prefix KV cache hit metrics |
-| 12 | `test_12_metrics_pd` | P/D token distribution + NIXL transfer metrics |
-| 13 | `test_13_metrics_scheduler` | EPP/scheduler processed request metrics |
-| 14 | `test_14_metrics_flow_control` | Flow control dispatch activity metrics |
-| 15 | `test_15_metrics_lora` | LoRA adapter state metrics (`vllm:lora_requests_info`) |
-| 20 | `test_20_benchmark` | GuideLLM benchmark with performance thresholds |
-| 21 | `test_21_metrics_post_benchmark` | P/D metrics after benchmark load |
-| 30a | `test_30a_maas_ready` | MaaSModelRef Ready, auth policy + subscription Active; endpoint + model alias |
-| 30b | `test_30b_maas_unauthenticated` | MaaS inference without an API key → 401 |
-| 30c | `test_30c_maas_api_key` | API key creation with a K8s user token → 201 |
-| 30d | `test_30d_maas_inference` | Authenticated MaaS inference → 200 |
-| 30e | `test_30e_maas_rate_limit` | Subscription token rate limit → 429 after quota |
-| 99 | `test_99_cleanup` | Delete the manifest's resources (companion documents, then LLMInferenceServices) |
+The numbered phase table (01 prereq → 99 cleanup, including MaaS and benchmark phases) lives in `docs/developing.md` — keep it in sync when adding a phase.
 
 Phases a test case's config turns off are deselected at collection, not skipped: each such phase carries `@pytest.mark.applies_when.with_args(predicate)`, and `conftest.py:pytest_collection_modifyitems` drops items whose `predicate(tc)` is false (the summary reports them as `deselected`). Use `.with_args(...)` — a mark called with a lone callable treats it as the decorated function. Runtime conditions (missing manifest, failed deploy, too few GPUs, `--nocleanup`, `--mode discover`) still `pytest.skip()` and show as SKIPPED.
 
@@ -169,42 +150,9 @@ EPP pod discovery tries multiple label patterns (`EPP_LABELS` list in `metrics.p
 
 The EPP's `--metrics-endpoint-auth=true` flag (default in RHOAI 3.5+) requires bearer token auth to scrape `/metrics` on port 9090. `Deployer.ensure_metrics_rbac()` creates a `ClusterRoleBinding` granting the EPP's service account access to `kserve-metrics-reader-cluster-role`. The scraper generates a token via `kubectl create token`.
 
-## Adding a New CLI Flag
+## Contributor workflows
 
-1. Add `parser.add_argument()` in `cli.py:main()`.
-2. Add matching `parser.addoption()` in `conftest.py:pytest_addoption()`.
-3. Add the mapping in `cli.py:flag_map` dict (or handle boolean flags separately after the `flag_map` loop).
-4. Access via `request.config.getoption("--flag-name")` in fixtures or test methods.
-
-## Adding a New Test Case
-
-Use `scripts/new-testcase.sh <name>` to generate stubs, then customize:
-
-1. Create `configs/testcases/<name>.yaml` using camelCase keys matching the `TestCase` dataclass hierarchy in `config.py`.
-2. Add the corresponding manifest to the manifest repo (or `deploy/manifests/` for local testing). Set `deployment.manifestPath` to the filename.
-3. Enable the appropriate `metricsCheck` flags based on the deployment topology.
-4. Add the test case name to relevant profiles in `configs/profiles/*.yaml`.
-
-## Adding a New Config Field
-
-1. Add the dataclass field in `config.py` (snake_case).
-2. If it's a new nested type, add a `_build()` branch for it (matching on the type name string in hints).
-3. Use camelCase for the key in YAML files.
-4. Duration fields (`timeout`, `ready_timeout`, `retry_interval`) are auto-parsed from strings like `"15m"`, `"2h"`, `"300s"`.
-
-## Adding a New Conformance Phase
-
-1. Add a method `test_NN_<name>` to `LLMDPhases` in `test_conformance.py` (MaaS phases: `MaaSPhases` in `tests/maas/phases.py`). Pick a number between existing phases.
-2. Gate config-dependent phases with `@pytest.mark.applies_when.with_args(lambda tc: ...)` (deselected when false); use `pytest.skip()` only for runtime conditions.
-3. Phases receive fixtures via parameter names: `deployer`, `tc`, `client`, `endpoint`, `scraper`, `test_mode`, `no_cleanup`, `request`.
-
-## Adding a New Metrics Validator
-
-1. Define metric constants at the top of `metrics.py`.
-2. Add a `validate_<topology>(results) -> list[CheckResult]` function.
-3. Add a `check_<flag>: bool` field to `MetricsCheck` in `config.py`.
-4. Wire it up in `test_conformance.py` as a new `test_NN_metrics_<name>` method gated by the new flag.
-5. Import the validator in `test_conformance.py`.
+Adding a CLI flag, test case, config field, conformance phase, or metrics validator is documented step-by-step in `docs/developing.md` — the single copy. Keep that file in sync when these code paths change.
 
 ## Key Design Decisions
 
@@ -228,10 +176,9 @@ As of [odh-gitops PR#156](https://github.com/opendatahub-io/odh-gitops/pull/156)
 
 ## Config files
 
-- **configs/testcases/*.yaml** — Each file maps to one `TestCase` dataclass. Contains model info (including LoRA adapters), deployment spec, validation criteria, and metrics check flags.
-- **configs/profiles/*.yaml** — Named groups of test case names. Includes version-specific profiles (`3.4.yaml`, `3.5.yaml`, `3.5-gpu.yaml`, `maas-3.5.yaml`, `maas-3.6.yaml`) and topology profiles (`smoke`, `pd`, `cache-aware`, `flow-control`, `lora`).
-- **deploy/manifests/*.yaml** — LLMInferenceService manifests, cloned from the manifest repo via `--setup`. Gitignored.
-- **deploy/manifests/.manifest-ref** — Tracks the active manifest branch, repo URL, commit SHA, and clone timestamp.
+- **configs/testcases/*.yaml** — one `TestCase` per file; anatomy in `configs/testcases/README.md`, per-case documentation in `docs/test-cases.md`
+- **configs/profiles/*.yaml** — named groups of case names; anatomy in `configs/profiles/README.md`
+- **deploy/manifests/** — LLMInferenceService manifests, cloned via `--setup` (gitignored); `.manifest-ref` tracks the active branch/commit
 
 ## CI
 
