@@ -221,6 +221,8 @@ class TestCase:
     deployment: DeployConfig = field(default_factory=DeployConfig)
     validation: ValidateConfig = field(default_factory=ValidateConfig)
     cleanup: bool = True
+    # Runs only when named with --testcase or listed in a profile, never in a run that names no test cases.
+    opt_in: bool = False
 
 
 @dataclass
@@ -393,3 +395,8 @@ def resolve_profile(profile: TestProfile, testcase_dir: str | Path) -> list[Test
 def filter_by_names(cases: list[TestCase], names: list[str]) -> list[TestCase]:
     name_set = set(names)
     return [tc for tc in cases if tc.name in name_set]
+
+
+def default_testcases(cases: list[TestCase]) -> list[TestCase]:
+    """Test cases a run that names none selects: every case that is not opt-in."""
+    return [tc for tc in cases if not tc.opt_in]

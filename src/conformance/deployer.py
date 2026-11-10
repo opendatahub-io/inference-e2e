@@ -38,8 +38,6 @@ from pathlib import Path
 from urllib.parse import urlsplit
 from uuid import uuid4
 
-import yaml
-
 from conformance.config import (
     TestCase,
     apply_manifest_model_config,
@@ -47,6 +45,7 @@ from conformance.config import (
     load_manifest_documents,
 )
 from conformance.maas import patch_maas_refs
+from conformance.modelexpress import patch_modelexpress_refs
 
 log = logging.getLogger(__name__)
 
@@ -56,6 +55,10 @@ PREFILL_LABEL = "app.kubernetes.io/name={name},app.kubernetes.io/component=llmin
 # Marks LLMInferenceServices this suite deployed, so the start-of-run sweep never
 # touches services it does not own.
 MANAGED_LABEL = "llm-d-e2e.opendatahub.io/managed"
+# KServe copies this label to the engine Deployment and pods, so Kueue admits them against the LocalQueue.
+QUEUE_NAME_LABEL = "kueue.x-k8s.io/queue-name"
+RDMA_RESOURCE_PREFIX = "rdma/"
+TCP_UCX_ENV = {"UCX_TLS": "tcp,cuda_copy", "UCX_PROTO_INFO": "y"}
 
 OPERATOR_NAMESPACES = ("redhat-ods-applications", "redhat-ods-operator", "rhaii")
 _IMAGE_PULL_FAILURE_REASONS = ("ImagePullBackOff", "ErrImagePull")
@@ -145,7 +148,12 @@ class Deployer:
         decode_node_selector: str = "",
         prefill_node_selector: str = "",
         model_override: str = "",
+        rdma_resource: str = "",
+        no_rdma: bool = False,
+        queue_name: str = "",
     ):
+        if rdma_resource and no_rdma:
+            raise ValueError("rdma_resource and no_rdma are mutually exclusive")
         self.kubeconfig = kubeconfig
         self.platform = platform
         self.namespace = namespace
@@ -158,6 +166,9 @@ class Deployer:
         self.decode_node_selector = _parse_node_selector(decode_node_selector)
         self.prefill_node_selector = _parse_node_selector(prefill_node_selector)
         self.model_override = model_override
+        self.rdma_resource = rdma_resource
+        self.no_rdma = no_rdma
+        self.queue_name = queue_name
         self._port_forward_proc: subprocess.Popen | None = None
         self._port_forward_port: int = 0
         self._port_forward_target: tuple[str, str, int] | None = None
@@ -183,13 +194,13 @@ class Deployer:
         log.info("Using render image: %s", default)
         return default
 
-    def kubectl(self, *args: str, check: bool = True) -> str:
+    def kubectl(self, *args: str, check: bool = True, input: str | None = None) -> str:
         cmd = ["kubectl"]
         if self.kubeconfig:
             cmd += ["--kubeconfig", self.kubeconfig]
         cmd += list(args)
         log.debug("kubectl %s", " ".join(args))
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=300, input=input)
         if check and result.returncode != 0:
             raise RuntimeError(f"kubectl {' '.join(args)} failed: {result.stderr.strip()}")
         return result.stdout.strip()
@@ -668,6 +679,8 @@ class Deployer:
         service_names = self.manifest_service_names(tc)
         try:
             self.ensure_namespace()
+            if self.queue_name:
+                self.kubectl("get", "localqueue", self.queue_name, "-n", self.namespace)
             for name in service_names:
                 self._ensure_clean_slate(name)
             for manifest_doc in manifest_docs:
@@ -678,8 +691,8 @@ class Deployer:
             # `kubectl apply -n` rejects documents that declare another namespace
             # (e.g. MaaS policies), so each declared namespace is applied separately.
             for namespace, docs in self._documents_by_namespace(manifest_docs).items():
-                with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml") as f:
-                    yaml.dump_all(docs, f)
+                with tempfile.NamedTemporaryFile(mode="w", suffix=".json") as f:
+                    json.dump({"apiVersion": "v1", "kind": "List", "items": docs}, f)
                     f.flush()
                     self._apply_with_webhook_retry(f.name, namespace=namespace)
             for name in service_names:
@@ -1223,6 +1236,8 @@ class Deployer:
                 labels = {}
                 metadata["labels"] = labels
             labels[MANAGED_LABEL] = "true"
+            if self.queue_name:
+                labels[QUEUE_NAME_LABEL] = self.queue_name
 
             spec = manifest.get("spec")
             if not isinstance(spec, dict):
@@ -1270,7 +1285,13 @@ class Deployer:
                         else:
                             env_list.append(entry)
 
+            if self.rdma_resource:
+                self._rename_rdma_resources(spec, self.rdma_resource)
+            if self.no_rdma:
+                self._run_without_rdma(spec)
+
         patch_maas_refs(manifest_docs, primary_name, tc.name, self.namespace)
+        patch_modelexpress_refs(manifest_docs, primary_name, tc.name, self.namespace)
         return manifest_docs
 
     @staticmethod
@@ -1344,6 +1365,54 @@ class Deployer:
                 resources.get(section, {}).pop("nvidia.com/gpu", None)
             resources["requests"] = {"cpu": "500m", "memory": "1Gi"}
             resources["limits"] = {"cpu": "1", "memory": "2Gi"}
+
+    def runs_without_rdma(self, tc: TestCase) -> bool:
+        """True under ``--no-rdma`` or for a testcase whose resources declare ``rdma: false``."""
+        return self.no_rdma or not tc.deployment.resources.rdma
+
+    @staticmethod
+    def _rdma_quantities(container: dict) -> list[dict]:
+        """The container's ``limits`` and ``requests`` maps that name an ``rdma/*`` device."""
+        resources = container.get("resources") or {}
+        sections = (resources.get("limits") or {}, resources.get("requests") or {})
+        return [quantities for quantities in sections if any(n.startswith(RDMA_RESOURCE_PREFIX) for n in quantities)]
+
+    @staticmethod
+    def _rdma_containers(spec: dict) -> list[dict]:
+        """Containers in any pod template (decode, prefill, and their workers) that request an ``rdma/*`` device."""
+        prefill = spec.get("prefill") or {}
+        templates = (spec.get("template"), spec.get("worker"), prefill.get("template"), prefill.get("worker"))
+        return [
+            container
+            for template in templates
+            for container in (template or {}).get("containers") or []
+            if Deployer._rdma_quantities(container)
+        ]
+
+    @staticmethod
+    def _rename_rdma_resources(spec: dict, resource: str) -> None:
+        """Request ``resource`` wherever a pod template requests an ``rdma/*`` device, keeping the quantity."""
+        for container in Deployer._rdma_containers(spec):
+            for quantities in Deployer._rdma_quantities(container):
+                for name in [n for n in quantities if n.startswith(RDMA_RESOURCE_PREFIX)]:
+                    quantities[resource] = quantities.pop(name)
+
+    @staticmethod
+    def _run_without_rdma(spec: dict) -> None:
+        """Move every container that requests an ``rdma/*`` device onto UCX over TCP.
+
+        Drops the device requests, the ``IPC_LOCK`` capability and the manifest's
+        ``UCX_*`` and ``MX_RDMA_*`` env, then sets ``TCP_UCX_ENV``.
+        """
+        for container in Deployer._rdma_containers(spec):
+            for quantities in Deployer._rdma_quantities(container):
+                for name in [n for n in quantities if n.startswith(RDMA_RESOURCE_PREFIX)]:
+                    del quantities[name]
+            capabilities = (container.get("securityContext") or {}).get("capabilities") or {}
+            if "IPC_LOCK" in (capabilities.get("add") or []):
+                capabilities["add"] = [c for c in capabilities["add"] if c != "IPC_LOCK"]
+            env = [e for e in container.get("env") or [] if not e.get("name", "").startswith(("UCX_", "MX_RDMA_"))]
+            container["env"] = env + [{"name": name, "value": value} for name, value in TCP_UCX_ENV.items()]
 
     def _inject_pull_secret(self, spec: dict, secret_name: str):
         for template in self._pod_templates(spec):

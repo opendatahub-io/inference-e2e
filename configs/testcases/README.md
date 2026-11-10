@@ -16,6 +16,9 @@ uv run llm-d-e2e -p configs/profiles/smoke.yaml   # profile → list of names
 uv run llm-d-e2e --list-testcases             # names + descriptions
 ```
 
+With neither `-t` nor `-p`, every case runs except those with `optIn: true`,
+which run only when named or listed in a profile.
+
 Profiles under `configs/profiles/` only list test case **names** from this
 folder. Manifests live in `deploy/manifests/` (cloned via `--setup`); each case
 points at one file with `deployment.manifestPath`.
@@ -29,6 +32,7 @@ points at one file with `deployment.manifestPath`.
 | `deployment` | Manifest path, replicas, resources, timeouts, optional `prefill` / `envOverrides` |
 | `validation` | Health, prompts / `chatPrompts`, `metricsCheck` flags, optional `benchmark` |
 | `cleanup` | Whether phase 99 deletes the deployment |
+| `optIn` | Run only when named or listed in a profile, never in a run that selects no cases |
 
 Duration strings (`15m`, `2h`, `300s`) are accepted on timeout fields.
 
@@ -62,6 +66,8 @@ Enable only what the topology proves:
 | `moe` | MoE with DP/EP |
 | `multi-pool` | Multiple InferencePools |
 | `maas-single-gpu` | single-gpu through MaaS (auth, API key, rate limit); `validation.maas.endpointScheme` |
+| `modelexpress-p2p` | ModelExpress native loading: P2P scale-out, server TLS, token auth, NetworkPolicy |
+| `modelexpress-p2p-xks` | `modelexpress-p2p` for xKS without RDMA: P2P over TCP, plaintext server, token auth; `resources.rdma: false` |
 
 Exact descriptions are in each file’s `description` field.
 

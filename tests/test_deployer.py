@@ -17,6 +17,7 @@ Coverage areas:
 
 from __future__ import annotations
 
+import copy
 import sys
 from pathlib import Path
 
@@ -453,13 +454,13 @@ spec: {}
 
 def _record_applies(deployer, monkeypatch) -> list[tuple[str, list[dict]]]:
     """Stub cluster calls; record each ``kubectl apply`` as (namespace, documents)."""
-    import yaml
+    import json
 
     applies = []
 
     def fake_kubectl(*args, **kwargs):
         if args[0] == "apply":
-            applies.append((args[2], list(yaml.safe_load_all(Path(args[4]).read_text()))))
+            applies.append((args[2], json.loads(Path(args[4]).read_text())["items"]))
         return ""
 
     monkeypatch.setattr(deployer, "kubectl", fake_kubectl)
@@ -489,6 +490,29 @@ def test_single_namespace_manifest_is_one_apply_into_test_namespace(tmp_path, mo
     assert [(ns, [doc["metadata"]["name"] for doc in docs]) for ns, docs in applies] == [
         ("llm-conformance-test", ["case", "b"])
     ]
+
+
+def test_applied_env_values_stay_strings(tmp_path, monkeypatch):
+    """kubectl reads YAML 1.1, where a bare y, n or off is a boolean and an EnvVar value must be a string."""
+    from conformance.deployer import Deployer
+
+    (tmp_path / "env.yaml").write_text(
+        "apiVersion: serving.kserve.io/v1alpha2\nkind: LLMInferenceService\nmetadata:\n  name: a\n"
+        "spec:\n  template:\n    containers:\n    - name: main\n      env:\n"
+        '      - name: UCX_PROTO_INFO\n        value: "y"\n'
+        '      - name: FLAG_N\n        value: "n"\n'
+        '      - name: FLAG_OFF\n        value: "off"\n'
+    )
+    tc = load_testcase("configs/testcases/lora-single.yaml")
+    tc.deployment.manifest_path = "env.yaml"
+    deployer = Deployer(manifest_dir=str(tmp_path), namespace="llm-conformance-test")
+    applies = _record_applies(deployer, monkeypatch)
+
+    assert deployer.deploy(tc).success
+
+    [(_, [service])] = applies
+    env = service["spec"]["template"]["containers"][0]["env"]
+    assert {e["name"]: e["value"] for e in env} == {"UCX_PROTO_INFO": "y", "FLAG_N": "n", "FLAG_OFF": "off"}
 
 
 _MAAS_MANIFEST = """apiVersion: serving.kserve.io/v1alpha2
@@ -1990,3 +2014,152 @@ def test_new_testcase_script_rejects_duplicate(tmp_path, monkeypatch):
     result = subprocess.run([str(script), "dupe-test"], capture_output=True, text=True)
     assert result.returncode != 0
     assert "already exists" in result.stdout or "already exists" in result.stderr
+
+
+def _rdma_manifest(tmp_path, resource: str) -> Path:
+    import yaml
+
+    def template():
+        quantities = {"nvidia.com/gpu": "1", resource: "1"}
+        return {
+            "containers": [{"name": "main", "resources": {"limits": dict(quantities), "requests": dict(quantities)}}]
+        }
+
+    manifest_path = tmp_path / "single-gpu-smoke.yaml"
+    manifest = {
+        "apiVersion": "serving.kserve.io/v1alpha2",
+        "kind": "LLMInferenceService",
+        "metadata": {"name": "single-gpu-smoke"},
+        "spec": {
+            "model": {"uri": "hf://Qwen/Qwen3-0.6B", "name": "Qwen/Qwen3-0.6B"},
+            "template": template(),
+            "worker": template(),
+            "prefill": {"replicas": 1, "template": template(), "worker": template()},
+        },
+    }
+    manifest_path.write_text(yaml.dump(manifest))
+    return manifest_path
+
+
+def _pod_templates(spec: dict) -> list[dict]:
+    return [spec["template"], spec["worker"], spec["prefill"]["template"], spec["prefill"]["worker"]]
+
+
+def test_rdma_resource_replaces_rdma_requests_in_every_pod_template(tmp_path):
+    from conformance.deployer import Deployer
+
+    tc = load_testcase("configs/testcases/single-gpu-smoke.yaml")
+    manifest_path = _rdma_manifest(tmp_path, "rdma/rdma_shared_device_ib")
+
+    patched = Deployer(manifest_dir=str(tmp_path), rdma_resource="rdma/roce_gdr")._patch_manifest(manifest_path, tc)
+
+    for template in _pod_templates(patched[0]["spec"]):
+        resources = template["containers"][0]["resources"]
+        assert resources["limits"] == {"nvidia.com/gpu": "1", "rdma/roce_gdr": "1"}
+        assert resources["requests"] == {"nvidia.com/gpu": "1", "rdma/roce_gdr": "1"}
+
+
+def test_manifest_rdma_requests_are_kept_without_rdma_resource(tmp_path):
+    from conformance.deployer import Deployer
+
+    tc = load_testcase("configs/testcases/single-gpu-smoke.yaml")
+    manifest_path = _rdma_manifest(tmp_path, "rdma/rdma_shared_device_ib")
+
+    patched = Deployer(manifest_dir=str(tmp_path))._patch_manifest(manifest_path, tc)
+
+    for template in _pod_templates(patched[0]["spec"]):
+        assert template["containers"][0]["resources"]["limits"]["rdma/rdma_shared_device_ib"] == "1"
+
+
+def test_no_rdma_moves_rdma_containers_onto_tcp(tmp_path):
+    import yaml
+
+    from conformance.deployer import TCP_UCX_ENV, Deployer
+
+    def rdma_container():
+        return {
+            "name": "main",
+            "securityContext": {"capabilities": {"add": ["IPC_LOCK", "SYS_PTRACE"]}},
+            "env": [
+                {"name": "HF_HOME", "value": "/models"},
+                {"name": "UCX_TLS", "value": "rc,sm,cuda_ipc,cuda_copy"},
+                {"name": "UCX_RNDV_SCHEME", "value": "get_zcopy"},
+                {"name": "MX_RDMA_NIC_PIN", "value": "auto"},
+            ],
+            "resources": {
+                "limits": {"nvidia.com/gpu": "1", "rdma/rdma_shared_device_ib": "1"},
+                "requests": {"nvidia.com/gpu": "1", "rdma/rdma_shared_device_ib": "1"},
+            },
+        }
+
+    sidecar = {
+        "name": "sidecar",
+        "securityContext": {"capabilities": {"add": ["IPC_LOCK"]}},
+        "env": [{"name": "UCX_TLS", "value": "rc"}],
+    }
+    manifest_path = tmp_path / "single-gpu-smoke.yaml"
+    manifest_path.write_text(
+        yaml.dump(
+            {
+                "apiVersion": "serving.kserve.io/v1alpha2",
+                "kind": "LLMInferenceService",
+                "metadata": {"name": "single-gpu-smoke"},
+                "spec": {
+                    "template": {"containers": [rdma_container(), copy.deepcopy(sidecar)]},
+                    "worker": {"containers": [rdma_container()]},
+                    "prefill": {
+                        "template": {"containers": [rdma_container()]},
+                        "worker": {"containers": [rdma_container()]},
+                    },
+                },
+            }
+        )
+    )
+    tc = load_testcase("configs/testcases/single-gpu-smoke.yaml")
+
+    spec = Deployer(manifest_dir=str(tmp_path), no_rdma=True)._patch_manifest(manifest_path, tc)[0]["spec"]
+
+    for template in _pod_templates(spec):
+        main = template["containers"][0]
+        assert main["resources"] == {"limits": {"nvidia.com/gpu": "1"}, "requests": {"nvidia.com/gpu": "1"}}
+        assert main["securityContext"]["capabilities"]["add"] == ["SYS_PTRACE"]
+        assert main["env"] == [{"name": "HF_HOME", "value": "/models"}] + [
+            {"name": name, "value": value} for name, value in TCP_UCX_ENV.items()
+        ]
+    assert spec["template"]["containers"][1] == sidecar
+
+
+@pytest.mark.parametrize(
+    ("no_rdma", "testcase", "expected"),
+    [
+        (False, "modelexpress-p2p", False),
+        (True, "modelexpress-p2p", True),
+        (False, "modelexpress-p2p-xks", True),
+    ],
+)
+def test_runs_without_rdma_follows_the_flag_or_the_testcase(no_rdma, testcase, expected):
+    from conformance.deployer import Deployer
+
+    tc = load_testcase(f"configs/testcases/{testcase}.yaml")
+
+    assert Deployer(no_rdma=no_rdma).runs_without_rdma(tc) is expected
+
+
+def test_no_rdma_and_rdma_resource_are_exclusive():
+    from conformance.deployer import Deployer
+
+    with pytest.raises(ValueError, match="mutually exclusive"):
+        Deployer(rdma_resource="rdma/roce_gdr", no_rdma=True)
+
+
+def test_queue_name_labels_every_llminferenceservice(tmp_path):
+    from conformance.deployer import QUEUE_NAME_LABEL, Deployer
+
+    tc = load_testcase("configs/testcases/single-gpu-smoke.yaml")
+    manifest_path = _rdma_manifest(tmp_path, "rdma/rdma_shared_device_ib")
+
+    queued = Deployer(manifest_dir=str(tmp_path), queue_name="llm-conformance")._patch_manifest(manifest_path, tc)
+    unqueued = Deployer(manifest_dir=str(tmp_path))._patch_manifest(manifest_path, tc)
+
+    assert queued[0]["metadata"]["labels"][QUEUE_NAME_LABEL] == "llm-conformance"
+    assert QUEUE_NAME_LABEL not in unqueued[0]["metadata"]["labels"]

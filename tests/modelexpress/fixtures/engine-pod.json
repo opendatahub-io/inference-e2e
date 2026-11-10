@@ -1,0 +1,279 @@
+{
+  "apiVersion": "v1",
+  "kind": "Pod",
+  "metadata": {
+    "name": "modelexpress-p2p-kserve-74b6699c9c-rzbt8",
+    "namespace": "llm-conformance-test"
+  },
+  "spec": {
+    "serviceAccountName": "modelexpress-p2p-kserve",
+    "containers": [
+      {
+        "name": "main",
+        "image": "quay.io/aipcc/rhaiis/cuda-ubi9:3.6.0-1793259641",
+        "args": [
+          "--load-format",
+          "modelexpress"
+        ],
+        "env": [
+          {
+            "name": "MX_RDMA_NIC_PIN",
+            "value": "auto"
+          },
+          {
+            "name": "UCX_RNDV_SCHEME",
+            "value": "get_zcopy"
+          },
+          {
+            "name": "UCX_RNDV_THRESH",
+            "value": "0"
+          },
+          {
+            "name": "KSERVE_MODEL_ARGS",
+            "value": "Qwen/Qwen3-0.6B"
+          },
+          {
+            "name": "HOME",
+            "value": "/home"
+          },
+          {
+            "name": "VLLM_LOGGING_LEVEL",
+            "value": "INFO"
+          },
+          {
+            "name": "HF_HUB_CACHE",
+            "value": "/models"
+          },
+          {
+            "name": "MX_SERVER_ADDRESS",
+            "value": "https://modelexpress.llm-conformance-test.svc.cluster.local:8001"
+          },
+          {
+            "name": "MODEL_EXPRESS_URL",
+            "value": "https://modelexpress.llm-conformance-test.svc.cluster.local:8001"
+          },
+          {
+            "name": "MX_MODEL_REVISION",
+            "value": "spec-32505ece6098a53e"
+          },
+          {
+            "name": "POD_NAME",
+            "valueFrom": {
+              "fieldRef": {
+                "apiVersion": "v1",
+                "fieldPath": "metadata.name"
+              }
+            }
+          },
+          {
+            "name": "POD_NAMESPACE",
+            "valueFrom": {
+              "fieldRef": {
+                "apiVersion": "v1",
+                "fieldPath": "metadata.namespace"
+              }
+            }
+          },
+          {
+            "name": "POD_UID",
+            "valueFrom": {
+              "fieldRef": {
+                "apiVersion": "v1",
+                "fieldPath": "metadata.uid"
+              }
+            }
+          },
+          {
+            "name": "MX_WORKER_HOST",
+            "valueFrom": {
+              "fieldRef": {
+                "apiVersion": "v1",
+                "fieldPath": "status.podIP"
+              }
+            }
+          },
+          {
+            "name": "MX_AUTH_TOKEN_PATH",
+            "value": "/var/run/secrets/modelexpress/token"
+          },
+          {
+            "name": "MODEL_EXPRESS_TLS_CA_FILE",
+            "value": "/etc/modelexpress/ca/ca.crt"
+          },
+          {
+            "name": "MODEL_EXPRESS_NO_SHARED_STORAGE",
+            "value": "1"
+          },
+          {
+            "name": "MODEL_EXPRESS_CACHE_DIRECTORY",
+            "value": "/models"
+          },
+          {
+            "name": "HF_HUB_OFFLINE",
+            "value": "1"
+          }
+        ],
+        "volumeMounts": [
+          {
+            "mountPath": "/home",
+            "name": "home"
+          },
+          {
+            "mountPath": "/tmp",
+            "name": "tmp-dir"
+          },
+          {
+            "mountPath": "/dev/shm",
+            "name": "dshm"
+          },
+          {
+            "mountPath": "/models",
+            "name": "model-cache"
+          },
+          {
+            "mountPath": "/var/run/kserve/tls",
+            "name": "tls-certs",
+            "readOnly": true
+          },
+          {
+            "mountPath": "/var/run/secrets/modelexpress",
+            "name": "modelexpress-token",
+            "readOnly": true
+          },
+          {
+            "mountPath": "/etc/modelexpress/ca",
+            "name": "modelexpress-ca",
+            "readOnly": true
+          },
+          {
+            "mountPath": "/var/run/secrets/kubernetes.io/serviceaccount",
+            "name": "kube-api-access-rd9bm",
+            "readOnly": true
+          }
+        ],
+        "securityContext": {
+          "allowPrivilegeEscalation": false,
+          "capabilities": {
+            "add": [
+              "IPC_LOCK"
+            ],
+            "drop": [
+              "ALL"
+            ]
+          },
+          "readOnlyRootFilesystem": false,
+          "runAsNonRoot": true,
+          "runAsUser": 1001870000,
+          "seccompProfile": {
+            "type": "RuntimeDefault"
+          }
+        }
+      }
+    ],
+    "volumes": [
+      {
+        "emptyDir": {},
+        "name": "home"
+      },
+      {
+        "emptyDir": {
+          "medium": "Memory",
+          "sizeLimit": "1Gi"
+        },
+        "name": "dshm"
+      },
+      {
+        "emptyDir": {},
+        "name": "model-cache"
+      },
+      {
+        "emptyDir": {},
+        "name": "tmp-dir"
+      },
+      {
+        "name": "tls-certs",
+        "secret": {
+          "defaultMode": 420,
+          "secretName": "modelexpress-p2p-kserve-self-signed-certs"
+        }
+      },
+      {
+        "name": "modelexpress-token",
+        "projected": {
+          "defaultMode": 420,
+          "sources": [
+            {
+              "serviceAccountToken": {
+                "audience": "modelexpress",
+                "expirationSeconds": 3600,
+                "path": "token"
+              }
+            }
+          ]
+        }
+      },
+      {
+        "configMap": {
+          "defaultMode": 420,
+          "items": [
+            {
+              "key": "service-ca.crt",
+              "path": "ca.crt"
+            }
+          ],
+          "name": "openshift-service-ca.crt"
+        },
+        "name": "modelexpress-ca"
+      },
+      {
+        "name": "kube-api-access-rd9bm",
+        "projected": {
+          "defaultMode": 420,
+          "sources": [
+            {
+              "serviceAccountToken": {
+                "expirationSeconds": 3607,
+                "path": "token"
+              }
+            },
+            {
+              "configMap": {
+                "items": [
+                  {
+                    "key": "ca.crt",
+                    "path": "ca.crt"
+                  }
+                ],
+                "name": "kube-root-ca.crt"
+              }
+            },
+            {
+              "downwardAPI": {
+                "items": [
+                  {
+                    "fieldRef": {
+                      "apiVersion": "v1",
+                      "fieldPath": "metadata.namespace"
+                    },
+                    "path": "namespace"
+                  }
+                ]
+              }
+            },
+            {
+              "configMap": {
+                "items": [
+                  {
+                    "key": "service-ca.crt",
+                    "path": "service-ca.crt"
+                  }
+                ],
+                "name": "openshift-service-ca.crt"
+              }
+            }
+          ]
+        }
+      }
+    ]
+  }
+}
