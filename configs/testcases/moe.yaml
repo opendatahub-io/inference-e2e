@@ -1,5 +1,5 @@
 name: moe
-description: "MoE with DP/EP, 8 GPUs, RDMA/RoCE (default: deepseek-ai/DeepSeek-R1-0528)"
+description: "MoE with DP/EP across 4 nodes × 8 GPUs, RDMA/RoCE (default: deepseek-ai/DeepSeek-R1-0528)"
 model:
   name: deepseek-ai/DeepSeek-R1-0528
   uri: hf://deepseek-ai/DeepSeek-R1-0528
@@ -11,6 +11,7 @@ model:
     keepPVC: true
 deployment:
   manifestPath: moe.yaml
+  requiresGpu: true
   serviceAccount: hfsa
   readyTimeout: 90m
   networkAttachment: roce-p2
