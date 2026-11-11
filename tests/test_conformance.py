@@ -51,6 +51,7 @@ from conformance.metrics import (
     validate_vllm_basic,
 )
 from maas.phases import MaaSPhases
+from maas.praxis_phases import PraxisPhases
 
 LLMISVC_CRD = "llminferenceservices.serving.kserve.io"
 _MANIFEST_DIR = Path(__file__).resolve().parent.parent / "deploy" / "manifests"
@@ -612,9 +613,10 @@ class CleanupPhase:
         _log("Cleanup complete")
 
 
-class TestConformance(CleanupPhase, MaaSPhases, LLMDPhases):
+class TestConformance(CleanupPhase, PraxisPhases, MaaSPhases, LLMDPhases):
     """Every phase for each test case.
 
     pytest collects inherited test methods in reverse-MRO order, so the phase
-    groups run llm-d (01–21), then MaaS (30a–30e), then cleanup (99).
+    groups run llm-d (01–21), then MaaS (30a–30e), then Praxis 3.6-only
+    (30p–30q), then cleanup (99).
     """
