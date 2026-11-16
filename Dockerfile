@@ -1,14 +1,20 @@
-FROM python:3.11-slim
+FROM registry.access.redhat.com/ubi9/python-311:latest
+
+# UBI base for downstream alignment and to avoid docker.io rate limits.
+# The UBI python image defaults to UID 1001; run build steps as root (same
+# as the previous python:3.11-slim behavior) and rely on the chmod below
+# for non-root runtime use.
+USER root
 
 ARG MANIFEST_REF=main
 ARG MANIFEST_REPO=https://github.com/opendatahub-io/llm-d-conformance-manifests.git
 
-RUN apt-get update && apt-get install -y --no-install-recommends \
+RUN dnf install -y --setopt=install_weak_deps=False \
     curl git && \
     curl -LO "https://dl.k8s.io/release/$(curl -Ls https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl" && \
     install kubectl /usr/local/bin/kubectl && rm kubectl && \
     curl -LsSf https://astral.sh/uv/install.sh | env UV_UNMANAGED_INSTALL=/usr/local/bin sh && \
-    apt-get clean && rm -rf /var/lib/apt/lists/*
+    dnf clean all && rm -rf /var/cache/dnf
 
 ENV PYTHONUNBUFFERED=1
 
