@@ -55,6 +55,7 @@ log = logging.getLogger("conformance")
 
 
 def pytest_addoption(parser):
+    parser.addoption("--suite", choices=["conformance", "grid"], default="conformance", help="Test suite")
     parser.addoption("--profile", default="", help="Profile YAML path")
     parser.addoption("--testcase", default="", help="Test case name(s), comma-separated")
     parser.addoption("--testcase-dir", default="configs/testcases", help="Test case directory")
@@ -81,6 +82,8 @@ def pytest_addoption(parser):
 
 def _resolve_test_cases(config) -> list[TestCase]:
     testcase_dir = config.getoption("--testcase-dir")
+    if testcase_dir == "configs/testcases" and config.getoption("--suite") == "grid":
+        testcase_dir = "configs/grid/testcases"
     profile_path = config.getoption("--profile")
     testcase_names = config.getoption("--testcase")
 

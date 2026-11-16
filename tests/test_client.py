@@ -128,3 +128,21 @@ def test_chat_without_tools_omits_tools_key(monkeypatch):
     c.chat(model="test-model", prompt="hello")
     assert "tools" not in captured["json"]
     c.close()
+
+
+def test_chat_response_preserves_attribution_headers(monkeypatch):
+    import httpx
+
+    response = httpx.Response(
+        200,
+        request=httpx.Request("POST", "http://grid/v1/chat/completions"),
+        headers={"x-grid-site": "east", "x-grid-backend": "provider-a"},
+        json={"choices": [{"message": {"content": "Hello"}}]},
+    )
+    client = LLMClient("http://grid")
+    monkeypatch.setattr(client._client, "post", lambda *args, **kwargs: response)
+    try:
+        assert client.chat_response("model", "hello").headers["x-grid-backend"] == "provider-a"
+        assert client.chat("model", "hello") == response.json()
+    finally:
+        client.close()

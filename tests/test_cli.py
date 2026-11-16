@@ -245,3 +245,96 @@ def test_new_testcase_script_rejects_duplicate(tmp_path, monkeypatch):
     result = subprocess.run([str(script), "dupe-test"], capture_output=True, text=True)
     assert result.returncode != 0
     assert "already exists" in result.stdout or "already exists" in result.stderr
+
+
+def test_grid_suite_selects_endpoint_only_tests(monkeypatch):
+    import conformance.cli as cli
+
+    commands = []
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "llm-d-e2e",
+            "--suite",
+            "grid",
+            "--mode",
+            "discover",
+            "--endpoint",
+            "http://grid.example:8080",
+            "--bearer-token",
+            "caller-token",
+            "--model",
+            "test-model",
+        ],
+    )
+    monkeypatch.setattr(cli, "_run_pytest", lambda cmd: commands.append(cmd) or 0)
+    with pytest.raises(SystemExit) as result:
+        cli.main()
+    assert result.value.code == 0
+    assert commands[0][3] == "tests/grid/test_grid.py"
+    assert commands[0][commands[0].index("--testcase-dir") + 1] == "configs/grid/testcases"
+    assert commands[0][commands[0].index("--endpoint") + 1] == "http://grid.example:8080"
+    assert commands[0][commands[0].index("--bearer-token") + 1] == "caller-token"
+    assert commands[0][commands[0].index("--model") + 1] == "test-model"
+
+
+@pytest.mark.parametrize("options", [[], ["--mode", "discover"], ["--endpoint", "http://grid"]])
+def test_grid_suite_requires_discover_and_endpoint(monkeypatch, options):
+    import conformance.cli as cli
+
+    monkeypatch.setattr(sys, "argv", ["llm-d-e2e", "--suite", "grid", *options])
+    monkeypatch.setattr(cli, "_run_pytest", lambda _: pytest.fail("must reject before running pytest"))
+    with pytest.raises(SystemExit) as result:
+        cli.main()
+    assert result.value.code == 2
+
+
+def test_grid_suite_rejects_manifest_setup(monkeypatch):
+    import conformance.cli as cli
+
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "llm-d-e2e",
+            "--suite",
+            "grid",
+            "--mode",
+            "discover",
+            "--endpoint",
+            "http://grid",
+            "--setup",
+            "main",
+        ],
+    )
+    monkeypatch.setattr(cli, "_setup_manifests", lambda *_: pytest.fail("must not clone manifests"))
+    with pytest.raises(SystemExit) as result:
+        cli.main()
+    assert result.value.code == 2
+
+
+def test_grid_suite_preserves_custom_case_directory(monkeypatch):
+    import conformance.cli as cli
+
+    commands = []
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "llm-d-e2e",
+            "--suite",
+            "grid",
+            "--mode",
+            "discover",
+            "--endpoint",
+            "http://grid",
+            "--testcase-dir",
+            "custom-grid-cases",
+        ],
+    )
+    monkeypatch.setattr(cli, "_run_pytest", lambda cmd: commands.append(cmd) or 0)
+    with pytest.raises(SystemExit) as result:
+        cli.main()
+    assert result.value.code == 0
+    assert commands[0][commands[0].index("--testcase-dir") + 1] == "custom-grid-cases"

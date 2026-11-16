@@ -67,6 +67,17 @@ class LLMClient:
         temperature: float = 0.1,
         tools: list[dict] | None = None,
     ) -> dict:
+        return self.chat_response(model, prompt, max_tokens, temperature, tools).json()
+
+    def chat_response(
+        self,
+        model: str,
+        prompt: str | list[dict],
+        max_tokens: int = 64,
+        temperature: float = 0.1,
+        tools: list[dict] | None = None,
+    ) -> httpx.Response:
+        """Chat response including headers, for routing attribution checks."""
         messages = prompt if isinstance(prompt, list) else [{"role": "user", "content": prompt}]
         body: dict = {
             "model": model,
@@ -78,7 +89,7 @@ class LLMClient:
             body["tools"] = tools
         r = self._client.post("/v1/chat/completions", json=body)
         r.raise_for_status()
-        return r.json()
+        return r
 
     def messages(self, model: str, prompt: str | list[dict], max_tokens: int = 64, temperature: float = 0.1) -> dict:
         """Anthropic /v1/messages endpoint."""

@@ -188,6 +188,26 @@ class DeployConfig:
 
 
 @dataclass
+class GridCheck:
+    expected_routes: dict[str, list[str]] = field(default_factory=dict)
+    request_count: int = 10
+    max_tokens: int = 16
+
+    def __post_init__(self):
+        for name in ("request_count", "max_tokens"):
+            value = getattr(self, name)
+            if type(value) is not int or value < 1:
+                raise ValueError(f"grid.{name} must be a positive integer")
+        if not isinstance(self.expected_routes, dict) or not self.expected_routes:
+            raise ValueError("grid.expectedRoutes must map sites to allowed backend names")
+        for site, backends in self.expected_routes.items():
+            if not isinstance(site, str) or not site.strip() or not isinstance(backends, list) or not backends:
+                raise ValueError("grid.expectedRoutes requires nonempty sites and backend lists")
+            if any(not isinstance(backend, str) or not backend.strip() for backend in backends):
+                raise ValueError("grid.expectedRoutes backend names must be nonempty strings")
+
+
+@dataclass
 class ValidateConfig:
     health_endpoint: str = "/health"
     health_port: int = 8000
@@ -210,6 +230,7 @@ class ValidateConfig:
     multi_pool: MultiPoolCheck | None = None
     benchmark: BenchmarkConfig = field(default_factory=BenchmarkConfig)
     maas: MaaSCheck = field(default_factory=MaaSCheck)
+    grid: GridCheck | None = None
 
 
 @dataclass
@@ -276,6 +297,8 @@ def _build(cls, data: dict | None):
             kwargs[snake_key] = _build(DeployConfig, val) if val else DeployConfig()
         elif "ValidateConfig" in str(hint):
             kwargs[snake_key] = _build(ValidateConfig, val) if val else ValidateConfig()
+        elif "GridCheck" in str(hint):
+            kwargs[snake_key] = _build(GridCheck, val) if val is not None else None
         elif "MaaSCheck" in str(hint):
             kwargs[snake_key] = _build(MaaSCheck, val) if val else MaaSCheck()
         else:
