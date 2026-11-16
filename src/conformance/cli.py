@@ -37,6 +37,7 @@ def main():
     )
 
     # Test selection
+    parser.add_argument("--suite", choices=["conformance", "grid"], default="conformance", help="Test suite")
     parser.add_argument("--testcase", "-t", default="", help="Test case name(s), comma-separated")
     parser.add_argument("--profile", "-p", default="", help="Profile YAML path")
     parser.add_argument("--testcase-dir", default="configs/testcases", help="Test case directory")
@@ -105,6 +106,14 @@ def main():
 
     args = parser.parse_args()
 
+    if args.suite == "grid" and args.testcase_dir == "configs/testcases":
+        args.testcase_dir = "configs/grid/testcases"
+    if args.suite == "grid" and not (args.list_testcases or args.list_profiles):
+        if args.mode != "discover" or not args.endpoint:
+            parser.error("--suite grid requires --mode discover and an explicit --endpoint")
+        if args.setup is not None:
+            parser.error("--suite grid validates an existing endpoint; --setup is not supported")
+
     # Handle utility commands
     if args.list_testcases:
         _list_testcases(args.testcase_dir)
@@ -128,10 +137,11 @@ def main():
             return
 
     # Build pytest args
-    pytest_args = ["tests/test_conformance.py"]
+    pytest_args = ["tests/grid/test_grid.py" if args.suite == "grid" else "tests/test_conformance.py"]
 
     # Pass all flags through to pytest
     flag_map = {
+        "suite": "--suite",
         "testcase": "--testcase",
         "profile": "--profile",
         "testcase_dir": "--testcase-dir",

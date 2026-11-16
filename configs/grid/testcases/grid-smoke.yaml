@@ -1,0 +1,15 @@
+name: grid-smoke
+description: Existing Grid endpoint returns inference with expected backend attribution
+model:
+  name: Qwen/Qwen3-0.6B
+validation:
+  timeout: 30s
+  testPrompts:
+    - What is Kubernetes?
+  grid:
+    requestCount: 10
+    maxTokens: 16
+    # Customize these site/backend pairs to match your existing Grid deployment.
+    expectedRoutes:
+      grid-local: [llmd-a, llmd-b]
+cleanup: false
